@@ -277,6 +277,21 @@ fn atom_scale(a: &sfdoc_model::Atom, inp: &ParaInput<'_>) -> f32 {
 }
 
 pub fn layout_paragraph(inp: &ParaInput<'_>, sh: &Shapers<'_>) -> Option<Vec<Line>> {
+    layout_impl(inp, sh, None)
+}
+
+/// Widths the paragraph's text asks for, indents included: all on one line, and with every allowed break taken
+/// (the widest piece that cannot be broken). Table columns are sized from these.
+pub fn paragraph_widths(para: &Paragraph, style: &ParaStyle, sh: &Shapers<'_>) -> Option<(f32, f32)> {
+    let inp = ParaInput { para, style, width: 1.0e6, marker: None, footnote_base: 0 };
+    let mut min = 0.0f32;
+    let lines = layout_impl(&inp, sh, Some(&mut min))?;
+    let indent = style.left + style.right + style.first.max(0.0);
+    // Forced breaks make several lines even in unlimited width: the widest one counts.
+    Some((indent + lines.iter().map(|l| l.width).fold(0.0, f32::max), indent + min))
+}
+
+fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f32>) -> Option<Vec<Line>> {
     let fonts = sh.fonts;
     let style = inp.style;
     let base = base_metrics(style, fonts)?;
@@ -405,6 +420,19 @@ pub fn layout_paragraph(inp: &ParaInput<'_>, sh: &Shapers<'_>) -> Option<Vec<Lin
                 flush(piece, text.len(), &mut pos16, &mut units)?;
             }
         }
+    }
+
+    if let Some(min) = min_content {
+        // Units glued to the next one (no break allowed between them) count together.
+        let mut run = 0.0f32;
+        for u in &units {
+            run += u.width;
+            if u.brk != Brk::No {
+                *min = min.max(run - u.trail);
+                run = 0.0;
+            }
+        }
+        *min = min.max(run);
     }
 
     // 4. Fill lines greedily.

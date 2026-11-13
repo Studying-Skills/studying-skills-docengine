@@ -326,42 +326,44 @@ impl Flattener<'_, '_> {
         Some(())
     }
 
-    /// Width the blocks would take on one line each: what "size the columns by content" measures.
-    fn natural_width(&self, blocks: &[Block], ctx: Context) -> Option<f32> {
-        let mut w = 0.0f32;
+    /// Widths the blocks ask for: with everything on one line, and with every allowed line break taken. This is
+    /// what "size the columns by content" measures.
+    fn natural_widths(&self, blocks: &[Block], ctx: Context) -> Option<(f32, f32)> {
+        let (mut max, mut min) = (0.0f32, 0.0f32);
         for b in blocks {
-            let own = match b {
-                Block::Paragraph(p) => {
-                    let style = para_style(p, ctx);
-                    let inp = ParaInput { para: p, style: &style, width: 1.0e6, marker: None, footnote_base: 0 };
-                    let lines = layout_paragraph(&inp, self.sh)?;
-                    style.left + style.right + style.first.max(0.0) + lines.iter().map(|l| l.width).fold(0.0, f32::max)
-                }
-                Block::Leaf(l) => l.width.max(0.0),
+            let (own_max, own_min) = match b {
+                Block::Paragraph(p) => crate::para::paragraph_widths(p, &para_style(p, ctx), self.sh)?,
+                // A picture shrinks with its column, so it asks for no minimum.
+                Block::Leaf(l) => (l.width.max(0.0), 0.0),
                 Block::List(list) => {
-                    let mut m = 0.0f32;
+                    let mut m = (0.0f32, 0.0f32);
                     for item in &list.items {
-                        m = m.max(self.natural_width(&item.blocks, Context::ListItem)?);
+                        let w = self.natural_widths(&item.blocks, Context::ListItem)?;
+                        m = (m.0.max(w.0), m.1.max(w.1));
                     }
-                    m + LIST_INDENT
+                    (m.0 + LIST_INDENT, m.1 + LIST_INDENT)
                 }
-                Block::Quote(q) => self.natural_width(&q.blocks, Context::Quote)? + cm(1.25),
+                Block::Quote(q) => {
+                    let w = self.natural_widths(&q.blocks, Context::Quote)?;
+                    (w.0 + cm(1.25), w.1 + cm(1.25))
+                }
                 Block::Table(t) => {
-                    let mut m = 0.0f32;
+                    let mut m = (0.0f32, 0.0f32);
                     for row in &t.rows {
-                        let mut sum = 0.0;
+                        let mut sum = (0.0, 0.0);
                         for cell in &row.cells {
-                            sum += self.natural_width(&cell.blocks, Context::Cell { header: cell.header })?
-                                + 2.0 * CELL_PAD_X;
+                            let w = self.natural_widths(&cell.blocks, Context::Cell { header: cell.header })?;
+                            sum = (sum.0 + w.0 + 2.0 * CELL_PAD_X, sum.1 + w.1 + 2.0 * CELL_PAD_X);
                         }
-                        m = m.max(sum);
+                        m = (m.0.max(sum.0), m.1.max(sum.1));
                     }
                     m
                 }
             };
-            w = w.max(own);
+            max = max.max(own_max);
+            min = min.max(own_min);
         }
-        Some(w)
+        Some((max, min))
     }
 
     fn table(&mut self, t: &Table, x: f32, width: f32, pos: u32) -> Option<()> {
@@ -415,21 +417,28 @@ impl Flattener<'_, '_> {
             if t.col_widths.len() == ncols && t.col_widths.iter().all(|w| w.is_finite() && *w > 0.0) {
                 t.col_widths.clone()
             } else {
-                let mut natural = vec![MIN_COLUMN; ncols];
+                // Like a browser's automatic table layout: every column gets at least its widest unbreakable
+                // word, the rest of the width is shared in proportion to how much more each column would like.
+                let mut max = vec![MIN_COLUMN; ncols];
+                let mut min = vec![MIN_COLUMN; ncols];
                 for s in slots.iter().filter(|s| s.colspan == 1) {
-                    let w = self.natural_width(&s.cell.blocks, Context::Cell { header: s.cell.header })?
-                        + 2.0 * CELL_PAD_X
-                        + 1.0;
-                    if let Some(n) = natural.get_mut(s.col) {
-                        *n = n.max(w.min(width));
+                    let (a, b) = self.natural_widths(&s.cell.blocks, Context::Cell { header: s.cell.header })?;
+                    let pad = 2.0 * CELL_PAD_X + 1.0;
+                    if let (Some(mx), Some(mn)) = (max.get_mut(s.col), min.get_mut(s.col)) {
+                        *mx = mx.max((a + pad).min(width));
+                        *mn = mn.max((b + pad).min(width));
                     }
                 }
-                let sum: f32 = natural.iter().sum();
-                if sum <= width {
+                let (sum_max, sum_min): (f32, f32) = (max.iter().sum(), min.iter().sum());
+                if sum_max <= width {
                     // Room to spare: the table fills the text area, columns keep their proportions.
-                    natural.iter().map(|n| n * width / sum).collect()
+                    max.iter().map(|n| n * width / sum_max).collect()
+                } else if sum_min >= width {
+                    // Even the longest words do not fit: shrink everything alike (words will break).
+                    min.iter().map(|n| n * width / sum_min).collect()
                 } else {
-                    natural.iter().map(|n| (n * width / sum).max(MIN_COLUMN)).collect()
+                    let share = (width - sum_min) / (sum_max - sum_min);
+                    max.iter().zip(&min).map(|(mx, mn)| mn + (mx - mn) * share).collect()
                 }
             };
         let sum: f32 = widths.iter().sum();

@@ -810,6 +810,11 @@ fn columns_without_widths_follow_their_content_and_fill_the_text_area() {
     let c = &l.pages[0].cells;
     assert!((c[2].right() - (LEFT + TEXT_W)).abs() < 0.05);
     assert!(c[1].w < c[0].w);
+    // The short column keeps its word whole: columns give up only what they have beyond their longest word.
+    assert_eq!(lines(&l).iter().filter(|(_, pl)| pl.region == 2).count(), 1);
+    let l = lay(&doc(vec![table(vec![], vec![vec![cell("Бульбашкою"), cell(&wide), cell("1250")]])]));
+    let texts: Vec<String> = lines(&l).iter().map(|(_, pl)| line_text(pl)).collect();
+    assert!(texts.contains(&"Бульбашкою".to_string()) && texts.contains(&"1250".to_string()), "{texts:?}");
     // Stated widths wider than the page are scaled down too.
     let l = lay(&doc(vec![table(vec![600.0, 600.0], vec![vec![cell("a"), cell("b")]])]));
     assert!((l.pages[0].cells[1].right() - (LEFT + TEXT_W)).abs() < 0.05);
