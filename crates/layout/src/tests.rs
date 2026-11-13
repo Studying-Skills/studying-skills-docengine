@@ -302,14 +302,15 @@ fn a_word_longer_than_the_line_is_broken_inside() {
 }
 
 #[test]
-fn an_object_wider_than_the_page_still_gets_a_line() {
+fn an_object_wider_than_the_line_is_scaled_to_it() {
     let wide = Inline::Atom(Atom { kind: AtomKind::Math, width: 2000.0, height: 20.0, depth: 4.0, data: None });
     let l = lay(&doc(vec![para_of(vec![t("до "), wide, t(" після")])]));
-    assert_eq!(lines(&l).len(), 3);
     let page = l.page(0, &fonts()).unwrap();
-    assert!(
-        page.items.iter().any(|i| matches!(i, Item::Object(o) if o.kind == ObjectKind::Math && o.rect.w == 2000.0))
-    );
+    let o = page.items.iter().find_map(|i| if let Item::Object(o) = i { Some(o) } else { None }).unwrap();
+    // As wide as a first line can be, proportions kept, inside the text area.
+    assert!((o.rect.w - (TEXT_W - INDENT)).abs() < 0.01);
+    assert!((o.rect.h / o.rect.w - 20.0 / 2000.0).abs() < 1e-5);
+    assert!(o.rect.right() <= LEFT + TEXT_W + 0.01);
 }
 
 #[test]
@@ -715,6 +716,267 @@ fn characters_the_font_lacks_come_from_another_loaded_font_or_stay_one_box() {
     assert!(c > a);
 }
 
+fn cell_of(blocks: Vec<Block>) -> Cell {
+    Cell { blocks, ..Default::default() }
+}
+fn cell(s: &str) -> Cell {
+    cell_of(vec![para(s)])
+}
+fn head(s: &str) -> Cell {
+    Cell { header: true, ..cell(s) }
+}
+fn table(col_widths: Vec<f32>, rows: Vec<Vec<Cell>>) -> Block {
+    Block::Table(Table { col_widths, rows: rows.into_iter().map(|cells| Row { cells }).collect() })
+}
+fn boxes(l: &Layout) -> Vec<(usize, &PlacedBox)> {
+    l.pages
+        .iter()
+        .enumerate()
+        .flat_map(|(i, p)| {
+            p.entries.iter().filter_map(move |e| if let Entry::Box(b) = e { Some((i, b)) } else { None })
+        })
+        .collect()
+}
+
+#[test]
+fn table_cells_stand_side_by_side_in_a_grid() {
+    let d = doc(vec![
+        para("До таблиці."),
+        table(
+            vec![100.0, 200.0],
+            vec![
+                vec![head("Алгоритм"), head("Час")],
+                vec![
+                    cell("Бульбашка"),
+                    cell("довгий текст, якого вистачить на кілька рядків у вузькій клітинці таблиці"),
+                ],
+            ],
+        ),
+        para("Після."),
+    ]);
+    let l = lay(&d);
+    let page = &l.pages[0];
+    assert_eq!(page.cells.len(), 4);
+    let [a, b, c, e] = [page.cells[0], page.cells[1], page.cells[2], page.cells[3]];
+    // The document's own column widths, from the left edge of the text area.
+    assert!((a.x - LEFT).abs() < 0.01 && (a.w - 100.0).abs() < 0.01);
+    assert!((b.x - (LEFT + 100.0)).abs() < 0.01 && (b.w - 200.0).abs() < 0.01);
+    // Cells of a row share its top and height; the second row starts where the first ends.
+    assert_eq!((a.y, a.h), (b.y, b.h));
+    assert_eq!((c.y, c.h), (e.y, e.h));
+    assert!((c.y - a.bottom()).abs() < 0.01);
+    // The long cell wraps and sets the row's height; its neighbour is as tall with one line.
+    let in_cell = |r: u16| lines(&l).into_iter().filter(|(_, pl)| pl.region == r).collect::<Vec<_>>();
+    assert_eq!(in_cell(3).len(), 1);
+    assert!(in_cell(4).len() >= 3);
+    assert!(
+        (c.h - (in_cell(4).iter().map(|(_, pl)| pl.line.height).sum::<f32>() + 2.0 * flow::CELL_PAD_Y)).abs() < 0.01
+    );
+    // Text starts after the cell padding; header cells are bold, body cells are not, single-spaced and unindented.
+    let first = in_cell(1)[0].1;
+    assert!((first.x - (LEFT + flow::CELL_PAD_X)).abs() < 0.01 && first.line.x.abs() < 0.01);
+    assert!((first.y - (a.y + flow::CELL_PAD_Y)).abs() < 0.01);
+    let font = |pl: &PlacedLine| {
+        pl.line.frags.iter().find_map(|f| if let FragKind::Text(t) = &f.kind { Some(t.font) } else { None }).unwrap()
+    };
+    assert_eq!(font(first), fonts().resolve(None, true, false).unwrap().id);
+    assert_eq!(font(in_cell(3)[0].1), fonts().resolve(None, false, false).unwrap().id);
+    assert!((in_cell(3)[0].1.line.height - 14.0 * 2355.0 / 2048.0).abs() < 0.01);
+    // A frame of four hairlines per cell, drawn under the text.
+    assert_eq!(page.decor.len(), 16);
+    let display = l.page(0, &fonts()).unwrap();
+    assert!(display.items.iter().take(16).all(|i| matches!(i, Item::Rect { color, .. } if *color == Color::BLACK)));
+    // The paragraphs around keep a gap from the table.
+    let body = in_cell(0);
+    assert!(a.y - (body[0].1.y + body[0].1.line.height) >= 5.9);
+    assert!(body[1].1.y - e.bottom() >= 5.9);
+}
+
+#[test]
+fn columns_without_widths_follow_their_content_and_fill_the_text_area() {
+    let l = lay(&doc(vec![table(
+        vec![],
+        vec![vec![cell("№"), cell("Назва алгоритму сортування")], vec![cell("1"), cell("Швидке")]],
+    )]));
+    let c = &l.pages[0].cells;
+    assert!((c[0].w + c[1].w - TEXT_W).abs() < 0.05);
+    assert!(c[1].w > 3.0 * c[0].w, "{} vs {}", c[0].w, c[1].w);
+    // Nothing wraps: every cell is one line.
+    assert_eq!(lines(&l).len(), 4);
+
+    // Too much for the page: columns shrink in proportion, the table still ends at the right margin.
+    let wide = "дуже довгий вміст клітинки, якому не вистачить місця в один рядок на сторінці ".repeat(2);
+    let l = lay(&doc(vec![table(vec![], vec![vec![cell(&wide), cell("коротко"), cell(&wide)]])]));
+    let c = &l.pages[0].cells;
+    assert!((c[2].right() - (LEFT + TEXT_W)).abs() < 0.05);
+    assert!(c[1].w < c[0].w);
+    // Stated widths wider than the page are scaled down too.
+    let l = lay(&doc(vec![table(vec![600.0, 600.0], vec![vec![cell("a"), cell("b")]])]));
+    assert!((l.pages[0].cells[1].right() - (LEFT + TEXT_W)).abs() < 0.05);
+}
+
+#[test]
+fn merged_cells_span_columns_and_rows() {
+    let tall = Cell { rowspan: 2, ..cell("на два рядки") };
+    let wide = Cell { colspan: 2, ..cell("на два стовпці") };
+    let l = lay(&doc(vec![table(
+        vec![100.0, 100.0, 100.0],
+        vec![vec![tall, cell("b"), cell("c")], vec![cell("d"), cell("e")], vec![wide, cell("f")]],
+    )]));
+    let c = &l.pages[0].cells;
+    assert_eq!(c.len(), 7);
+    // The row-spanning cell covers both rows; the second row's cells start in the second column.
+    assert!((c[0].h - (c[1].h + c[3].h)).abs() < 0.01);
+    assert!((c[3].x - (LEFT + 100.0)).abs() < 0.01 && (c[4].x - (LEFT + 200.0)).abs() < 0.01);
+    assert!((c[5].w - 200.0).abs() < 0.01 && (c[6].x - (LEFT + 200.0)).abs() < 0.01);
+    // A spanning cell taller than its rows stretches the last of them.
+    let big = Cell { rowspan: 2, ..cell_of((0..6).map(|i| para(&format!("рядок {i}"))).collect()) };
+    let l = lay(&doc(vec![table(vec![200.0, 100.0], vec![vec![big, cell("x")], vec![cell("y")]])]));
+    let c = &l.pages[0].cells;
+    assert!(c[2].h > 3.0 * c[1].h);
+    assert!((c[0].h - (c[1].h + c[2].h)).abs() < 0.01);
+}
+
+#[test]
+fn clicks_and_vertical_movement_respect_cells() {
+    let long = "текст на кілька рядків у вузькому стовпці таблиці";
+    let d = doc(vec![
+        para("Перед."),
+        table(vec![150.0, 150.0], vec![vec![cell("ліва"), cell(long)], vec![cell("нижня ліва"), cell("нижня права")]]),
+        para("Після."),
+    ]);
+    let l = lay(&d);
+    let c = l.pages[0].cells.clone();
+    let pos_of = |needle: &str| {
+        let mut found = None;
+        d.walk(|e| {
+            if let Event::Text { pos, text } = e
+                && text.text.starts_with(needle)
+            {
+                found = Some(pos);
+            }
+        });
+        found.unwrap()
+    };
+    let (left, right, below, below_right) =
+        (pos_of("ліва"), pos_of("текст"), pos_of("нижня ліва"), pos_of("нижня права"));
+    // Under the short left cell's only line, level with the right cell's third line: still the left cell.
+    let hit = l.hit_test(0, c[0].x + 60.0, c[0].bottom() - 3.0).unwrap();
+    assert!(hit >= left && hit <= left + 4, "{hit}");
+    // Every caret in a cell is found again by a click on it.
+    for p in right..right + utf16_len(long) {
+        let caret = l.caret_rect(p).unwrap();
+        assert_eq!(l.hit_test(0, caret.x, caret.y + caret.height / 2.0), Some(p));
+    }
+    // Down from the left cell: the cell below it, not the cell to the right (which is next in the document).
+    let x = l.caret_rect(left + 2).unwrap().x;
+    let down = l.line_move(left + 2, true, x).unwrap();
+    assert!(down >= below && down < below + 10, "{down}");
+    assert_eq!(l.line_move(down, false, x), Some(left + 2));
+    // Down the right column line by line, then into the cell below, then out of the table.
+    let xr = l.caret_rect(right + 3).unwrap().x;
+    let mut p = right + 3;
+    let mut seen = vec![];
+    for _ in 0..8 {
+        p = l.line_move(p, true, xr).unwrap();
+        seen.push(p);
+    }
+    assert!(seen.iter().any(|p| *p >= below_right && *p < below_right + 12));
+    assert!(seen.iter().all(|p| !(*p >= below && *p < below + 10)), "strayed into the left column: {seen:?}");
+    assert_eq!(*seen.last().unwrap(), l.line_move(*seen.last().unwrap(), true, xr).unwrap());
+    assert!(*seen.last().unwrap() > below_right + 12);
+    // Up from the paragraph after the table at the left column's x: into the bottom-left cell.
+    let after = pos_of("Після.");
+    let up = l.line_move(after, false, c[0].x + 20.0).unwrap();
+    assert!(up >= below && up < below + 10, "{up}");
+}
+
+#[test]
+fn a_long_table_moves_rows_whole_and_repeats_its_header() {
+    let mut rows = vec![vec![head("№"), head("Значення")]];
+    rows.extend((0..80).map(|i| vec![cell(&format!("{i}")), cell(&format!("значення {i}"))]));
+    let d = doc(vec![table(vec![60.0, 200.0], rows)]);
+    let l = lay(&d);
+    assert!(l.pages.len() >= 3);
+    for (i, page) in l.pages.iter().enumerate() {
+        // No cell is cut by the page's bottom edge.
+        assert!(page.cells.iter().all(|c| c.bottom() <= 841.89 - mm(20.0) + 0.05));
+        let ghosts: Vec<String> = page.running.iter().map(line_text).collect();
+        if i == 0 {
+            assert!(ghosts.is_empty());
+            assert_eq!(line_text(lines(&l)[0].1), "№");
+        } else {
+            // The header again, drawn at the top, above the first real row.
+            assert_eq!(ghosts[..2], ["№", "Значення"]);
+            assert!((page.running[0].y - (mm(20.0) + flow::CELL_PAD_Y)).abs() < 0.01);
+            assert!(page.entries[0].top() > page.running[0].y + 10.0);
+        }
+    }
+    // The repeated header holds no positions: the caret of the header text is on page 1 only.
+    assert_eq!(l.page_of(4), Some(0));
+    let total: usize = l.pages.iter().map(|p| p.entries.len()).sum();
+    assert_eq!(total, 2 + 160);
+    // The repeat is painted: page 2's display list has the header text although no entry holds it.
+    let display = l.page(1, &fonts()).unwrap();
+    assert!(display.items.iter().any(|i| matches!(i, Item::Glyphs(g) if g.text == "Значення")));
+}
+
+#[test]
+fn a_row_taller_than_a_page_continues_on_the_next() {
+    let many: Vec<Block> = (0..100).map(|i| para(&format!("рядок {i}"))).collect();
+    let d = doc(vec![
+        para("Перед."),
+        table(vec![200.0, 200.0], vec![vec![cell_of(many), cell("коротка")], vec![cell("останній"), cell("рядок")]]),
+    ]);
+    let l = lay(&d);
+    assert_eq!(l.pages.len(), 3);
+    let bottom = 841.89 - mm(20.0);
+    // The first two pages end with the row's frame at the bottom margin; the text continues in order.
+    assert!((l.pages[0].cells[0].bottom() - bottom).abs() < 0.05);
+    assert!((l.pages[1].cells[0].y - mm(20.0)).abs() < 0.05 && (l.pages[1].cells[0].bottom() - bottom).abs() < 0.05);
+    let texts: Vec<String> =
+        lines(&l).iter().map(|(_, pl)| line_text(pl)).filter(|t| t.starts_with("рядок ")).collect();
+    assert_eq!(texts, (0..100).map(|i| format!("рядок {i}")).collect::<Vec<_>>());
+    assert!(lines(&l).iter().all(|(_, pl)| pl.y + pl.line.height <= bottom + 0.05));
+    // The short neighbour is drawn once, on the first page; the last row follows the tall one.
+    assert_eq!(
+        lines(&l).iter().filter(|(_, pl)| line_text(pl) == "коротка").map(|(p, _)| *p).collect::<Vec<_>>(),
+        vec![0]
+    );
+    assert_eq!(lines(&l).iter().find(|(_, pl)| line_text(pl) == "останній").unwrap().0, 2);
+}
+
+#[test]
+fn pictures_lists_and_tables_live_inside_cells() {
+    let inner = table(vec![], vec![vec![cell("в1"), cell("в2")]]);
+    let item = |s: &str| ListItem { blocks: vec![para(s)] };
+    let list =
+        Block::List(List { ordered: true, style: None, start: 1, items: vec![item("один"), item("два")] });
+    let d = doc(vec![table(
+        vec![240.0, 240.0],
+        vec![vec![
+            cell_of(vec![para("зверху"), leaf(LeafKind::Image, 600.0, 300.0), list]),
+            cell_of(vec![inner, para("під вкладеною")]),
+        ]],
+    )]);
+    let l = lay(&d);
+    let c = &l.pages[0].cells;
+    // Two outer cells and the nested table's two.
+    assert_eq!(c.len(), 4);
+    assert!(c[2].x >= c[1].x && c[3].right() <= c[1].right() + 0.01 && c[2].y >= c[1].y);
+    // The picture is scaled to the cell's inner width and stays inside the cell.
+    let (_, img) = boxes(&l)[0];
+    assert!((img.rect.w - (240.0 - 2.0 * flow::CELL_PAD_X)).abs() < 0.01);
+    assert!(img.rect.x >= c[0].x && img.rect.right() <= c[0].right() && img.region == 1);
+    // A click on the nested cell answers from the nested cell.
+    let nested_line = lines(&l).into_iter().find(|(_, pl)| line_text(pl) == "в2").unwrap().1.clone();
+    assert_eq!(nested_line.region, 4);
+    assert_eq!(l.hit_test(0, c[3].x + 8.0, c[3].y + 8.0), Some(nested_line.base));
+    // List markers hang inside the cell.
+    let one = lines(&l).into_iter().find(|(_, pl)| line_text(pl).starts_with("1.")).unwrap().1.clone();
+    assert!(one.x > c[0].x + style::LIST_INDENT);
+}
+
 // ---- property tests -------------------------------------------------------------------------------------------
 
 fn arb_words() -> impl Strategy<Value = String> {
@@ -823,12 +1085,24 @@ proptest! {
             let page_h = bottom - d.page.margin_top;
             let pairs = inside_pairs(&d);
             for (pi, page) in l.pages.iter().enumerate() {
-                let mut y = d.page.margin_top - 0.01;
+                // Entries of one region (the page body, or one table cell) go down the page in order, and all stay
+                // inside the text area unless taller than a page.
+                let mut last: std::collections::HashMap<u16, f32> = std::collections::HashMap::new();
                 for e in &page.entries {
-                    // Entries go down the page in order and stay inside the text area, unless taller than a page.
+                    let y = last.get(&e.region()).copied().unwrap_or(d.page.margin_top - 0.01);
                     prop_assert!(e.top() >= y - 0.01, "page {} entry at {} above {}", pi, e.top(), y);
-                    y = e.bottom();
-                    prop_assert!(e.bottom() <= bottom + 0.05 || e.bottom() - e.top() > page_h - 0.05, "page {pi}: entry ends at {} below {bottom}", e.bottom());
+                    prop_assert!(e.top() >= d.page.margin_top - 0.01, "page {} entry at {} above the text area", pi, e.top());
+                    last.insert(e.region(), e.bottom());
+                    if e.region() != 0 {
+                        let cell = page.cells[usize::from(e.region()) - 1];
+                        prop_assert!(e.top() >= cell.y - 0.01 && e.bottom() <= cell.bottom() + 0.05, "page {pi}: entry {}..{} outside its cell {cell:?}", e.top(), e.bottom());
+                    }
+                    // Known limit: a table inside a cell is never split, so one taller than a page runs past the bottom.
+                    let nested = e.region() != 0 && {
+                        let own = page.cells[usize::from(e.region()) - 1];
+                        page.cells.iter().take(usize::from(e.region()) - 1).any(|o| o.x <= own.x && o.right() >= own.right() - 0.01 && o.y <= own.y && o.h > own.h)
+                    };
+                    prop_assert!(nested || e.bottom() <= bottom + 0.05 || e.bottom() - e.top() > page_h - 0.05, "page {pi}: entry {:?} region {} top {} ends at {} below {bottom}; cells {:?}", e.span(), e.region(), e.top(), e.bottom(), page.cells);
                     if let Entry::Line(pl) = e {
                         // Fragments of a line tile its positions without gaps or overlaps.
                         let mut at = pl.line.from;
@@ -866,7 +1140,8 @@ proptest! {
                             Some(c) => {
                                 let hit = l.hit_test(c.page, c.x, c.y + c.height / 2.0);
                                 if hit != Some(p) {
-                                    failure = Some(format!("position {p}: caret {c:?} is hit as {hit:?}"));
+                                    let around: Vec<String> = all.iter().filter(|(_, pl)| { let (a, b) = Entry::Line((*pl).clone()).span(); a <= p + 1 && p <= b + 1 }).map(|(pg, pl)| format!("[page {pg} region {} base {} {}..{} hard {} y {} x {} w {} frags {:?}]", pl.region, pl.base, pl.line.from, pl.line.to, pl.line.hard, pl.y, pl.x + pl.line.x, pl.line.width, pl.line.frags.iter().map(|f| (f.from, f.to, f.x, f.advance, match &f.kind { FragKind::Text(t) => t.text.clone(), FragKind::Atom { kind, .. } => format!("{kind:?}"), FragKind::Space => "space".into() })).collect::<Vec<_>>())).collect();
+                                    failure = Some(format!("position {p}: caret {c:?} is hit as {hit:?}; lines {around:?}; cells {:?}", l.pages[c.page].cells));
                                 }
                             }
                             None => failure = Some(format!("position {p} has no caret")),

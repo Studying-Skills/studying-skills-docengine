@@ -77,7 +77,13 @@ pub fn render_page(page: &Page, fonts: &FontSet, scale: f32) -> Result<Pixmap, R
     for item in &page.items {
         match item {
             Item::Rect { rect, color } => {
-                if let Some(r) = Rect::from_xywh(rect.x * scale, rect.y * scale, rect.w * scale, rect.h * scale) {
+                // Rectangles go on whole pixels, at least one pixel thick: hairlines (table grid, underlines)
+                // would otherwise fade to grey, and the rasteriser's anti-aliased path asserts on some
+                // sub-pixel rectangles.
+                let (x, y) = ((rect.x * scale).round(), (rect.y * scale).round());
+                let w = (((rect.x + rect.w) * scale).round() - x).max(1.0);
+                let h = (((rect.y + rect.h) * scale).round() - y).max(1.0);
+                if let Some(r) = Rect::from_xywh(x, y, w, h) {
                     pixmap.fill_rect(r, &paint(*color), Transform::identity(), None);
                 }
             }
@@ -187,6 +193,28 @@ mod tests {
         let c = p.pixel(10, 7).unwrap();
         assert_eq!((c.red(), c.green(), c.blue()), (200, 0, 0));
         assert_eq!(p.pixel(10, 12).unwrap().red(), 255);
+    }
+
+    #[test]
+    fn hairlines_are_drawn_solid_at_any_offset() {
+        // Every sub-pixel offset and thickness a table grid can produce, both directions.
+        for i in 0..40 {
+            let off = 5.0 + i as f32 * 0.037;
+            let thick = 0.2 + i as f32 * 0.02;
+            let page = Page {
+                size: Size { w: 40.0, h: 40.0 },
+                items: vec![
+                    Item::Rect { rect: sfdoc_geom::Rect::new(off, 2.0, thick, 30.3), color: Color::BLACK },
+                    Item::Rect { rect: sfdoc_geom::Rect::new(2.0, off + 10.0, 30.3, thick), color: Color::BLACK },
+                ],
+            };
+            let p = render_page(&page, &fonts(), 1.3).unwrap();
+            let dark = (0..p.width()).filter(|x| p.pixel(*x, 10).unwrap().red() < 60).count();
+            assert!(
+                (1..=2).contains(&dark),
+                "offset {off}, thickness {thick}: {dark} dark pixels across the vertical line"
+            );
+        }
     }
 
     #[test]

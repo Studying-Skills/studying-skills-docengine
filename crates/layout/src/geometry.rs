@@ -82,25 +82,26 @@ impl Layout {
         self.pages.iter().enumerate().flat_map(|(pi, p)| p.entries.iter().enumerate().map(move |(ei, e)| (pi, ei, e)))
     }
 
-    /// The entry a caret at `pos` belongs to: the last one that contains it (a position shared by the end of one
-    /// wrapped line and the start of the next shows on the next), else the first one after it, else the last.
+    /// The entry a caret at `pos` belongs to: of the entries that contain it, the one that starts last (a position
+    /// shared by the end of one wrapped line and the start of the next shows on the next); else the first one
+    /// after it; else the last one. Entries are not in position order across pages (a table row that continues on
+    /// the next page interleaves its cells), so every entry is looked at.
     fn locate(&self, pos: u32) -> Option<(usize, usize, &Entry)> {
-        let mut found = None;
-        let mut after = None;
+        let mut found: Option<(u32, (usize, usize, &Entry))> = None;
+        let mut after: Option<(u32, (usize, usize, &Entry))> = None;
         let mut last = None;
         for (pi, ei, e) in self.entries() {
             let (from, to) = e.span();
             if from <= pos && pos <= to {
-                found = Some((pi, ei, e));
-            } else if from > pos && after.is_none() {
-                after = Some((pi, ei, e));
+                if found.is_none_or(|(f, _)| from >= f) {
+                    found = Some((from, (pi, ei, e)));
+                }
+            } else if from > pos && after.is_none_or(|(f, _)| from < f) {
+                after = Some((from, (pi, ei, e)));
             }
             last = Some((pi, ei, e));
-            if from > pos && found.is_some() {
-                break;
-            }
         }
-        found.or(after).or(last)
+        found.or(after).map(|(_, e)| e).or(last)
     }
 
     pub fn caret_rect(&self, pos: u32) -> Option<Caret> {
@@ -126,10 +127,18 @@ impl Layout {
     /// The position nearest to a point of a page.
     pub fn hit_test(&self, page: usize, x: f32, y: f32) -> Option<u32> {
         let p = self.pages.get(page.min(self.pages.len().saturating_sub(1)))?;
-        // Nearest entry: vertical distance first, then horizontal distance to its box (table cells sit side by
-        // side at one height). Of equally near entries the first in document order wins.
+        // Inside a table cell only that cell's content answers: a click under a short cell's text must not land in
+        // the taller neighbour. The innermost cell wins (a nested table's cells come later in the list).
+        let region = p
+            .cells
+            .iter()
+            .rposition(|c| x >= c.x && x < c.right() && y >= c.y && y < c.bottom())
+            .map_or(0, |i| i as u16 + 1);
+        let in_region = region != 0 && p.entries.iter().any(|e| e.region() == region);
+        // Nearest entry: vertical distance first, then horizontal distance to its box. Of equally near entries the
+        // first in document order wins.
         let mut pick: Option<(&Entry, (f32, f32))> = None;
-        for e in &p.entries {
+        for e in p.entries.iter().filter(|e| !in_region || e.region() == region) {
             let dy = if y < e.top() {
                 e.top() - y
             } else if y >= e.bottom() {
@@ -216,15 +225,64 @@ impl Layout {
 
     /// The position one line up (`down == false`) or down from `pos`, as close to page x `goal_x` as that line
     /// allows. At the first or last line the position does not change.
+    ///
+    /// "The next line" is found by geometry, not by document order: in a table the line under the last line of a
+    /// cell is the first line of the cell below, while the next one in the document is in the cell to the right.
     pub fn line_move(&self, pos: u32, down: bool, goal_x: f32) -> Option<u32> {
-        let (pi, ei, _) = self.locate(pos)?;
-        let flat: Vec<(usize, usize, &Entry)> = self.entries().collect();
-        let here = flat.iter().position(|(p, e, _)| *p == pi && *e == ei)?;
-        let Some(target) = (if down { Some(here + 1) } else { here.checked_sub(1) }) else { return Some(pos) };
-        Some(match flat.get(target) {
-            Some((_, _, Entry::Line(l))) => l.base + line_offset_at(l, goal_x),
-            Some((_, _, Entry::Box(b))) => b.pos,
-            None => pos,
-        })
+        let (pi, ei, cur) = self.locate(pos)?;
+        let answer = |e: &Entry| match e {
+            Entry::Line(l) => l.base + line_offset_at(l, goal_x),
+            Entry::Box(b) => b.pos,
+        };
+        // Is the entry in the column the caret travels in? Entries of the caret's own cell (or of the page body,
+        // when the caret is outside tables) always are; another cell is if it lies under or above `goal_x`.
+        let in_column = |page: &crate::flow::PageLayout, e: &Entry, same: Option<u16>| {
+            let r = e.region();
+            if same == Some(r) || r == 0 {
+                return true;
+            }
+            page.cells.get(usize::from(r) - 1).is_some_and(|c| goal_x >= c.x && goal_x < c.right())
+        };
+        // Candidates on a page, best first: in the column, then nearest vertically, then nearest to `goal_x`.
+        let best = |page: &crate::flow::PageLayout, same: Option<u16>, ok: &dyn Fn(&Entry) -> bool| -> Option<u32> {
+            let mut pick: Option<(&Entry, (bool, f32, f32))> = None;
+            for e in page.entries.iter().filter(|e| ok(e)) {
+                let (left, right) = match e {
+                    Entry::Line(l) => (l.x, l.x + l.box_w),
+                    Entry::Box(b) => (b.rect.x, b.rect.right()),
+                };
+                let dx = if goal_x < left {
+                    left - goal_x
+                } else if goal_x > right {
+                    goal_x - right
+                } else {
+                    0.0
+                };
+                let dy = if down { e.top() } else { -e.bottom() };
+                let key = (!in_column(page, e, same), dy, dx);
+                if pick.is_none_or(|(_, k)| key < k) {
+                    pick = Some((e, key));
+                }
+            }
+            pick.map(|(e, _)| answer(e))
+        };
+        let page = self.pages.get(pi)?;
+        let (top, bottom) = (cur.top(), cur.bottom());
+        let here = best(page, Some(cur.region()), &|e: &Entry| {
+            let other = !std::ptr::eq(e, page.entries.get(ei).map_or(e, |c| c));
+            other && if down { e.top() >= bottom - 0.01 } else { e.bottom() <= top + 0.01 }
+        });
+        if here.is_some() {
+            return here;
+        }
+        // Nothing further on this page: the nearest page that has anything.
+        let mut i = pi;
+        loop {
+            i = if down { i + 1 } else { i.checked_sub(1).unwrap_or(usize::MAX) };
+            let Some(next) = self.pages.get(i) else { return Some(pos) };
+            if let Some(found) = best(next, None, &|_| true) {
+                return Some(found);
+            }
+        }
     }
 }

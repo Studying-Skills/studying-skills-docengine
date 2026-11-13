@@ -180,6 +180,9 @@ impl Layout {
     pub fn page(&self, index: usize, fonts: &FontSet) -> Option<Page> {
         let p = self.pages.get(index)?;
         let mut items = Vec::new();
+        for (rect, color) in &p.decor {
+            items.push(Item::Rect { rect: *rect, color: *color });
+        }
         for e in &p.entries {
             match e {
                 Entry::Line(l) => line_items(l, fonts, true, &mut items),
@@ -211,6 +214,12 @@ impl Layout {
     pub fn fingerprint(&self, index: usize) -> Option<u64> {
         let p = self.pages.get(index)?;
         let mut h = std::collections::hash_map::DefaultHasher::new();
+        for (rect, color) in &p.decor {
+            for v in [rect.x, rect.y, rect.w, rect.h] {
+                v.to_bits().hash(&mut h);
+            }
+            color.hash(&mut h);
+        }
         for e in &p.entries {
             match e {
                 Entry::Line(l) => hash_line(l, &mut h),

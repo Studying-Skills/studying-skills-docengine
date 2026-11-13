@@ -269,6 +269,13 @@ fn base_metrics(style: &ParaStyle, fonts: &FontSet) -> Option<(f32, f32, f32)> {
 }
 
 /// Lay a paragraph out into lines. `None` only when no fonts are loaded.
+/// An object wider than the paragraph is scaled down to its width: it would otherwise stick out of the page or of
+/// its table cell. Returns the factor.
+fn atom_scale(a: &sfdoc_model::Atom, inp: &ParaInput<'_>) -> f32 {
+    let room = (inp.width - inp.style.left - inp.style.right - inp.style.first.max(0.0)).max(1.0);
+    if a.width > room { room / a.width } else { 1.0 }
+}
+
 pub fn layout_paragraph(inp: &ParaInput<'_>, sh: &Shapers<'_>) -> Option<Vec<Line>> {
     let fonts = sh.fonts;
     let style = inp.style;
@@ -355,14 +362,17 @@ pub fn layout_paragraph(inp: &ParaInput<'_>, sh: &Shapers<'_>) -> Option<Vec<Lin
                         u.carets = vec![0.0, u.width];
                         u
                     }
-                    _ => b.fixed_unit(
-                        UnitKind::Atom(*index),
-                        pos16,
-                        a.width,
-                        (a.height - a.depth).max(0.0),
-                        a.depth.max(0.0),
-                        brk,
-                    ),
+                    _ => {
+                        let k = atom_scale(a, inp);
+                        b.fixed_unit(
+                            UnitKind::Atom(*index),
+                            pos16,
+                            a.width * k,
+                            (a.height - a.depth).max(0.0) * k,
+                            a.depth.max(0.0) * k,
+                            brk,
+                        )
+                    }
                 };
                 units.push_back(unit);
                 pos16 += 1;
@@ -501,13 +511,16 @@ pub fn layout_paragraph(inp: &ParaInput<'_>, sh: &Shapers<'_>) -> Option<Vec<Lin
                     None => FragKind::Space,
                 },
                 UnitKind::Atom(index) => match b.atoms.get(index) {
-                    Some(a) => FragKind::Atom {
-                        kind: a.kind,
-                        width: a.width,
-                        height: a.height,
-                        depth: a.depth,
-                        data: a.data.clone(),
-                    },
+                    Some(a) => {
+                        let k = atom_scale(a, inp);
+                        FragKind::Atom {
+                            kind: a.kind,
+                            width: a.width * k,
+                            height: a.height * k,
+                            depth: a.depth * k,
+                            data: a.data.clone(),
+                        }
+                    }
                     None => FragKind::Space,
                 },
                 UnitKind::Tab | UnitKind::Newline => FragKind::Space,
