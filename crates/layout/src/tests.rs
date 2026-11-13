@@ -87,17 +87,18 @@ fn a_body_paragraph_starts_at_the_margin_plus_the_first_line_indent() {
     let line = ls[0].1;
     assert!((line.x - LEFT).abs() < 0.01 && (line.y - mm(20.0)).abs() < 0.01);
     assert!((line.line.x - INDENT).abs() < 0.01);
-    // 14 pt Times: single line 16.1 pt, one and a half 24.15 pt; the extra space goes below the text.
+    // 14 pt Times: single line 16.1 pt, one and a half 24.15 pt; the extra space goes below the text, the font's
+    // own line gap (87 units) stays above it.
     assert!((line.line.height - 24.149).abs() < 0.01, "{}", line.line.height);
-    assert!((line.line.baseline - 14.0 * 1825.0 / 2048.0).abs() < 0.01);
+    assert!((line.line.baseline - 14.0 * (1825.0 + 87.0) / 2048.0).abs() < 0.01);
     let width = fonts().get(sfdoc_fonts::FontId(0)).unwrap().shaper().unwrap().advance("Привіт", 14.0);
     let start = l.caret_rect(1).unwrap();
     let end = l.caret_rect(7).unwrap();
     assert!((start.x - (LEFT + INDENT)).abs() < 0.01);
     assert!((end.x - start.x - width).abs() < 0.01);
     assert_eq!((start.page, start.y), (0, line.y));
-    // The caret spans ascent + descent, not the whole spaced line.
-    assert!((start.height - 14.0 * (1825.0 + 443.0) / 2048.0).abs() < 0.01);
+    // The caret spans the single-spaced line, not the whole spaced one.
+    assert!((start.height - 14.0 * (1825.0 + 443.0 + 87.0) / 2048.0).abs() < 0.01);
 }
 
 #[test]
@@ -191,7 +192,7 @@ fn mixed_sizes_fonts_and_scripts_share_a_baseline() {
     let line = &lines(&l)[0].1.line;
     // The tallest font sets the line: 24 pt Times, single 27.6 pt, times 1.5.
     assert!((line.height - 24.0 * 2355.0 / 2048.0 * 1.5).abs() < 0.01, "{}", line.height);
-    assert!((line.baseline - 24.0 * 1825.0 / 2048.0).abs() < 0.01);
+    assert!((line.baseline - 24.0 * (1825.0 + 87.0) / 2048.0).abs() < 0.01);
     let texts: Vec<_> =
         line.frags.iter().filter_map(|f| if let FragKind::Text(t) = &f.kind { Some(t) } else { None }).collect();
     let find = |s: &str| *texts.iter().find(|t| t.text.trim() == s).unwrap();
@@ -412,6 +413,87 @@ fn headings_have_their_own_size_spacing_and_no_indent() {
     assert!((ls[2].1.y - (h.y + h.line.height + 6.0)).abs() < 0.01);
     let run = h.line.frags.iter().find_map(|f| if let FragKind::Text(t) = &f.kind { Some(t) } else { None }).unwrap();
     assert_eq!((run.size, run.font), (16.0, fonts().resolve(None, true, false).unwrap().id));
+}
+
+#[test]
+fn space_after_and_space_before_do_not_add_up() {
+    // Two headings in a row: 6 pt after the first, 12 pt before the second - the gap is the larger one.
+    let l = lay(&doc(vec![para("Текст."), heading(1, "Розділ"), heading(2, "Підрозділ")]));
+    let ls = lines(&l);
+    let (h1, h2) = (ls[1].1, ls[2].1);
+    assert!((h2.y - (h1.y + h1.line.height + 12.0)).abs() < 0.01, "gap {}", h2.y - h1.y - h1.line.height);
+}
+
+fn aligned(s: &str, align: Align) -> Block {
+    Block::Paragraph(Paragraph {
+        inlines: vec![t(s)],
+        props: ParaProps { align: Some(align), ..Default::default() },
+        ..Default::default()
+    })
+}
+
+#[test]
+fn a_justified_line_narrows_its_spaces_to_take_one_more_word() {
+    // The same text set flush left and justified, at many lengths of the first word so that some line is bound to
+    // miss its last word by a little.
+    let mut squeezed = 0;
+    for n in 1..40 {
+        let text = format!("{} {LOREM}", "а".repeat(n));
+        let left = lay(&doc(vec![aligned(&text, Align::Left)]));
+        let just = lay(&doc(vec![aligned(&text, Align::Justify)]));
+        let (ll, jl) = (lines(&left), lines(&just));
+        assert!(jl.len() <= ll.len());
+        for (i, (_, pl)) in jl.iter().enumerate() {
+            let room = TEXT_W - if i == 0 { INDENT } else { 0.0 };
+            let last = pl.line.frags.last().unwrap();
+            let ink_right = last.x + if let FragKind::Text(t) = &last.kind { t.ink_width } else { last.advance };
+            // Squeezed or stretched, the text ends at the right edge and never beyond it - the last line too.
+            assert!(ink_right <= TEXT_W + 0.02, "n {n} line {i} ends at {ink_right}");
+            if pl.line.width > room + 0.02 {
+                squeezed += 1;
+                assert!((ink_right - TEXT_W).abs() < 0.02);
+                // No more than a quarter of the spaces' width is given up.
+                let spaces = line_text(pl).trim_end().matches(' ').count() as f32 * 3.5;
+                assert!(pl.line.width - room <= spaces * 0.25 + 0.01, "n {n} line {i}: {} over", pl.line.width - room);
+                // The carets follow the narrowed spaces: the caret after the last letter is where the ink ends.
+                let end = pl.base + pl.line.from + line_text(pl).trim_end().encode_utf16().count() as u32;
+                let c = just.caret_rect(end).unwrap();
+                assert!((c.x - (LEFT + ink_right)).abs() < 0.05, "caret {} ink {}", c.x, LEFT + ink_right);
+            }
+        }
+        assert_eq!(jl.iter().map(|(_, l)| line_text(l)).collect::<String>(), text);
+    }
+    assert!(squeezed >= 3, "only {squeezed} squeezed lines in 39 texts");
+}
+
+#[test]
+fn the_last_line_of_a_page_needs_room_for_its_text_only() {
+    // Double spacing: 32.2 pt lines. 22 whole lines fit the text area; the 23rd has room for its text (16.1 pt)
+    // but not for the leading under it, and still stays on the page.
+    let blocks: Vec<Block> = (0..50)
+        .map(|i| {
+            Block::Paragraph(Paragraph {
+                inlines: vec![t(&format!("Рядок {i}"))],
+                props: ParaProps { line_height: Some(2.0), ..Default::default() },
+                ..Default::default()
+            })
+        })
+        .collect();
+    let l = lay(&doc(blocks));
+    let first: Vec<_> = lines(&l).into_iter().filter(|(p, _)| *p == 0).collect();
+    assert_eq!(first.len(), 23);
+    let last = first[22].1;
+    let bottom = 841.89 - mm(20.0);
+    assert!(last.y + last.line.baseline + last.line.descent <= bottom + 0.01);
+    assert!(last.y + last.line.height > bottom);
+}
+
+/// Where the content of an entry ends: a line may hang the leading under its text past the text area.
+fn text_bottom(e: &Entry) -> f32 {
+    match e {
+        Entry::Line(l) => l.y + (l.line.baseline + l.line.descent).min(l.line.height),
+        _ => e.bottom(),
+    }
 }
 
 fn filler(n: usize) -> Vec<Block> {
@@ -1048,7 +1130,7 @@ fn a_line_moves_to_the_next_page_together_with_its_footnote() {
     let l = lay(&doc(blocks));
     let notes_top = l.pages[0].running.iter().map(|n| n.y).fold(f32::MAX, f32::min);
     assert!(l.pages[0].running.len() >= 3);
-    assert!(l.pages[0].entries.iter().all(|e| e.bottom() <= notes_top - flow::NOTE_SEPARATOR + 0.05));
+    assert!(l.pages[0].entries.iter().all(|e| text_bottom(e) <= notes_top - flow::NOTE_SEPARATOR + 0.05));
     assert!(l.pages[0].entries.len() < 30 && l.pages.len() == 2);
 }
 
@@ -1287,7 +1369,7 @@ proptest! {
                         let own = page.cells[usize::from(e.region()) - 1];
                         page.cells.iter().take(usize::from(e.region()) - 1).any(|o| o.x <= own.x && o.right() >= own.right() - 0.01 && o.y <= own.y && o.h > own.h)
                     };
-                    prop_assert!(nested || e.bottom() <= bottom + 0.05 || e.bottom() - e.top() > page_h - 0.05, "page {pi}: entry {:?} region {} top {} ends at {} below {bottom}; cells {:?}", e.span(), e.region(), e.top(), e.bottom(), page.cells);
+                    prop_assert!(nested || text_bottom(e) <= bottom + 0.05 || e.bottom() - e.top() > page_h - 0.05, "page {pi}: entry {:?} region {} top {} ends at {} below {bottom}; cells {:?}", e.span(), e.region(), e.top(), e.bottom(), page.cells);
                     if let Entry::Line(pl) = e {
                         // Fragments of a line tile its positions without gaps or overlaps.
                         let mut at = pl.line.from;

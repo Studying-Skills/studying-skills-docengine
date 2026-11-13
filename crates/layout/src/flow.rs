@@ -161,17 +161,14 @@ impl TableFlow {
 /// Height of items stacked from the top of a box: the first item's space before is dropped, as at a page top.
 fn stack_height(items: &[FlowItem]) -> f32 {
     let mut h = 0.0;
-    let mut pending = 0.0;
+    let mut pending = 0.0f32;
     let mut first = true;
     for item in items {
-        let (before, body, after) = match item {
-            FlowItem::Para(p) => (p.space_before, p.lines.iter().map(|l| l.height).sum::<f32>(), p.space_after),
-            FlowItem::Box(b) => (b.space_before, b.h, b.space_after),
-            FlowItem::Table(t) => (t.space_before, t.height(), t.space_after),
-            FlowItem::Toc(t) => (t.space_before, toc_lines(t).map(|l| l.height).sum::<f32>(), t.space_after),
-            FlowItem::PageBreak { .. } => continue,
-        };
-        h += if first { 0.0 } else { pending + before } + body;
+        if matches!(item, FlowItem::PageBreak { .. }) {
+            continue;
+        }
+        let (before, body, after) = parts(item);
+        h += if first { 0.0 } else { pending.max(before) } + body;
         pending = after;
         first = false;
     }
@@ -916,7 +913,7 @@ fn place_some(
 ) -> f32 {
     let mut used = 0.0f32;
     while let Some(item) = items.get(cur.item) {
-        let gap = |before: f32, cur: &Cursor| if cur.started { cur.pending + before } else { 0.0 };
+        let gap = |before: f32, cur: &Cursor| if cur.started { cur.pending.max(before) } else { 0.0 };
         match item {
             FlowItem::PageBreak { .. } => cur.item += 1,
             FlowItem::Para(p) => {
@@ -1180,33 +1177,37 @@ impl Paginator<'_> {
             p.entries.push(e);
         }
     }
-    /// Gap before an item with `space_before`: nothing at the top of a page.
+    /// Gap before an item with `space_before`: nothing at the top of a page; otherwise the larger of the space
+    /// after the item above and the space before this one. The two are not added - as in Word and as margins
+    /// collapse in a browser.
     fn gap(&self, space_before: f32) -> f32 {
-        if self.at_top() { 0.0 } else { self.pending + space_before }
+        if self.at_top() { 0.0 } else { self.pending.max(space_before) }
     }
 }
 
-/// Height an item needs so that a "keep with next" item before it is not left alone at the bottom of a page.
+/// Space before, height and space after of an item.
+fn parts(item: &FlowItem) -> (f32, f32, f32) {
+    match item {
+        FlowItem::Para(p) => (p.space_before, p.lines.iter().map(|l| l.height).sum::<f32>(), p.space_after),
+        FlowItem::Box(b) => (b.space_before, b.h, b.space_after),
+        FlowItem::Table(t) => (t.space_before, t.height(), t.space_after),
+        FlowItem::Toc(t) => (t.space_before, toc_lines(t).map(|l| l.height).sum::<f32>(), t.space_after),
+        FlowItem::PageBreak { .. } => (0.0, 0.0, 0.0),
+    }
+}
+
+/// Height of the beginning of an item that must stay with a "keep with next" item before it, so that the latter
+/// is not left alone at the bottom of a page.
 fn first_chunk(item: &FlowItem) -> f32 {
     match item {
         FlowItem::Para(p) => {
             let n = if p.keep_lines { p.lines.len() } else { p.lines.len().min(2) };
-            p.space_before + p.lines.iter().take(n).map(|l| l.height).sum::<f32>()
+            p.lines.iter().take(n).map(|l| l.height).sum::<f32>()
         }
-        FlowItem::Box(b) => b.space_before + b.h,
+        FlowItem::Box(b) => b.h,
         // The header rows and the first row under them.
-        FlowItem::Table(t) => t.space_before + t.rows_height(0, t.group_end(t.header_rows)),
-        FlowItem::Toc(t) => t.space_before + toc_lines(t).take(2).map(|l| l.height).sum::<f32>(),
-        FlowItem::PageBreak { .. } => 0.0,
-    }
-}
-
-fn full_height(item: &FlowItem) -> f32 {
-    match item {
-        FlowItem::Para(p) => p.space_before + p.lines.iter().map(|l| l.height).sum::<f32>() + p.space_after,
-        FlowItem::Box(b) => b.space_before + b.h + b.space_after,
-        FlowItem::Table(t) => t.space_before + t.height() + t.space_after,
-        FlowItem::Toc(t) => t.space_before + toc_lines(t).map(|l| l.height).sum::<f32>() + t.space_after,
+        FlowItem::Table(t) => t.rows_height(0, t.group_end(t.header_rows)),
+        FlowItem::Toc(t) => toc_lines(t).take(2).map(|l| l.height).sum::<f32>(),
         FlowItem::PageBreak { .. } => 0.0,
     }
 }
@@ -1225,11 +1226,15 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
         // beginning of the first item that is not chained.
         let keeps = |i: &FlowItem| matches!(i, FlowItem::Para(p) if p.keep_next);
         if keeps(item) && !pg.at_top() {
-            let mut need = pg.pending;
+            let mut need = 0.0f32;
+            let mut pending = pg.pending;
             let mut j = idx;
             while let Some((_, it)) = items.get(j) {
+                let (before, body, after) = parts(it);
+                need += pending.max(before);
                 if keeps(it) && j - idx < 4 {
-                    need += full_height(it);
+                    need += body;
+                    pending = after;
                     j += 1;
                 } else {
                     need += first_chunk(it);
@@ -1455,7 +1460,10 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                     let mut notes = 0.0f32;
                     for (i, l) in p.lines.iter().enumerate().skip(next) {
                         let with = notes + note_h(i);
-                        if used + l.height + pg.note_cost(with) > room {
+                        // The last line on a page needs room for its text only: the extra leading of 1.5 line
+                        // spacing lies under the text and may hang into the bottom margin, as in Word.
+                        let text_h = (l.baseline + l.descent).min(l.height);
+                        if used + text_h + pg.note_cost(with) > room {
                             break;
                         }
                         used += l.height;
