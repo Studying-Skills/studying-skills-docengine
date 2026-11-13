@@ -1,0 +1,10 @@
+---
+source: crates/cli/tests/corpus.rs
+expression: "sfdoc_cli::inspect(&doc)"
+---
+format 1 · page 210×297 mm · margins top 20 right 10 bottom 20 left 30 mm
+4 top-level blocks · size 248 · 4 text blocks · 238 UTF-16 units of text · 2 inline atoms · 0 leaf blocks
+  0      0..70     paragraph                Звичайний, жирний, курсив, жирний курсив, підкреслений, закр…
+  1     70..121    paragraph                Розміри: 10 pt 14 pt 24 pt; колір червоний і тло.
+  2    121..171    paragraph                Індекси: x2 + H2O; формула в рядку  і виноска.
+  3    171..248    paragraph                Шрифт Arial та Courier New; посилання studyflow; емодзі 😀 і …

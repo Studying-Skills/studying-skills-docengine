@@ -1,0 +1,219 @@
+{
+ "version": 1,
+ "blocks": [
+  {
+   "type": "paragraph",
+   "inlines": [
+    {
+     "type": "text",
+     "text": "Звичайний, "
+    },
+    {
+     "type": "text",
+     "text": "жирний",
+     "marks": {
+      "bold": true
+     }
+    },
+    {
+     "type": "text",
+     "text": ", "
+    },
+    {
+     "type": "text",
+     "text": "курсив",
+     "marks": {
+      "italic": true
+     }
+    },
+    {
+     "type": "text",
+     "text": ", "
+    },
+    {
+     "type": "text",
+     "text": "жирний курсив",
+     "marks": {
+      "bold": true,
+      "italic": true
+     }
+    },
+    {
+     "type": "text",
+     "text": ", "
+    },
+    {
+     "type": "text",
+     "text": "підкреслений",
+     "marks": {
+      "underline": true
+     }
+    },
+    {
+     "type": "text",
+     "text": ", "
+    },
+    {
+     "type": "text",
+     "text": "закреслений",
+     "marks": {
+      "strike": true
+     }
+    },
+    {
+     "type": "text",
+     "text": "."
+    }
+   ]
+  },
+  {
+   "type": "paragraph",
+   "inlines": [
+    {
+     "type": "text",
+     "text": "Розміри: "
+    },
+    {
+     "type": "text",
+     "text": "10 pt ",
+     "marks": {
+      "size": 10
+     }
+    },
+    {
+     "type": "text",
+     "text": "14 pt ",
+     "marks": {
+      "size": 14
+     }
+    },
+    {
+     "type": "text",
+     "text": "24 pt",
+     "marks": {
+      "size": 24
+     }
+    },
+    {
+     "type": "text",
+     "text": "; колір "
+    },
+    {
+     "type": "text",
+     "text": "червоний",
+     "marks": {
+      "color": "#c00000"
+     }
+    },
+    {
+     "type": "text",
+     "text": " і "
+    },
+    {
+     "type": "text",
+     "text": "тло",
+     "marks": {
+      "background": "#fff59d"
+     }
+    },
+    {
+     "type": "text",
+     "text": "."
+    }
+   ]
+  },
+  {
+   "type": "paragraph",
+   "inlines": [
+    {
+     "type": "text",
+     "text": "Індекси: x"
+    },
+    {
+     "type": "text",
+     "text": "2",
+     "marks": {
+      "vert": "sup"
+     }
+    },
+    {
+     "type": "text",
+     "text": " + H"
+    },
+    {
+     "type": "text",
+     "text": "2",
+     "marks": {
+      "vert": "sub"
+     }
+    },
+    {
+     "type": "text",
+     "text": "O; формула в рядку "
+    },
+    {
+     "type": "atom",
+     "kind": "math",
+     "width": 52.4,
+     "height": 14.2,
+     "depth": 3.1,
+     "data": "E = mc^2"
+    },
+    {
+     "type": "text",
+     "text": " і виноска"
+    },
+    {
+     "type": "atom",
+     "kind": "footnote",
+     "data": "fn1"
+    },
+    {
+     "type": "text",
+     "text": "."
+    }
+   ]
+  },
+  {
+   "type": "paragraph",
+   "inlines": [
+    {
+     "type": "text",
+     "text": "Шрифт Arial",
+     "marks": {
+      "font": "Arial"
+     }
+    },
+    {
+     "type": "text",
+     "text": " та "
+    },
+    {
+     "type": "text",
+     "text": "Courier New",
+     "marks": {
+      "font": "Courier New",
+      "code": true
+     }
+    },
+    {
+     "type": "text",
+     "text": "; посилання "
+    },
+    {
+     "type": "text",
+     "text": "studyflow",
+     "marks": {
+      "link": "https://studyflow.kulunchick.tech",
+      "underline": true,
+      "color": "#0563c1"
+     }
+    },
+    {
+     "type": "text",
+     "text": "; емодзі 😀 і табуляція\tтут."
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,25 @@
+[package]
+name = "sfdoc-cli"
+description = "sfdoc: inspect and render StudyFlow documents from the command line"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "sfdoc"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+sfdoc-model = { workspace = true }
+sfdoc-fonts = { workspace = true }
+sfdoc-layout = { workspace = true }
+sfdoc-raster = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }

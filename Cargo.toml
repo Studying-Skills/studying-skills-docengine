@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+sfdoc-geom = { path = "crates/geom" }
+sfdoc-model = { path = "crates/model" }
+sfdoc-fonts = { path = "crates/fonts" }
+sfdoc-layout = { path = "crates/layout" }
+sfdoc-raster = { path = "crates/raster" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+rustybuzz = "0.20"
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "png-format", "simd"] }
+wasm-bindgen = "0.2"
+proptest = "1"
+insta = { version = "1", features = ["json"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "warn"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+# Snapshot and property tests run much faster with optimised dependencies.
+[profile.dev.package."*"]
+opt-level = 2

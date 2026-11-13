@@ -1,0 +1,22 @@
+[package]
+name = "sfdoc-layout"
+description = "Layout of the StudyFlow document engine: document to pages of positioned glyphs and boxes"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sfdoc-geom = { workspace = true }
+sfdoc-model = { workspace = true }
+sfdoc-fonts = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+serde_json = { workspace = true }

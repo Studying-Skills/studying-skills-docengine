@@ -1,0 +1,334 @@
+{
+ "version": 1,
+ "blocks": [
+  {
+   "type": "leaf",
+   "kind": "hidden"
+  },
+  {
+   "type": "paragraph",
+   "level": 1,
+   "inlines": [
+    {
+     "type": "text",
+     "text": "Зміст"
+    }
+   ]
+  },
+  {
+   "type": "leaf",
+   "kind": "toc"
+  },
+  {
+   "type": "leaf",
+   "kind": "pageBreak"
+  },
+  {
+   "type": "paragraph",
+   "level": 2,
+   "inlines": [
+    {
+     "type": "text",
+     "text": "Списки"
+    }
+   ]
+  },
+  {
+   "type": "list",
+   "items": [
+    {
+     "blocks": [
+      {
+       "type": "paragraph",
+       "inlines": [
+        {
+         "type": "text",
+         "text": "перший пункт"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "blocks": [
+      {
+       "type": "paragraph",
+       "inlines": [
+        {
+         "type": "text",
+         "text": "другий пункт"
+        }
+       ]
+      },
+      {
+       "type": "list",
+       "ordered": true,
+       "style": "cyrillic-paren",
+       "items": [
+        {
+         "blocks": [
+          {
+           "type": "paragraph",
+           "inlines": [
+            {
+             "type": "text",
+             "text": "вкладений а"
+            }
+           ]
+          }
+         ]
+        },
+        {
+         "blocks": [
+          {
+           "type": "paragraph",
+           "inlines": [
+            {
+             "type": "text",
+             "text": "вкладений б"
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "list",
+   "ordered": true,
+   "start": 3,
+   "items": [
+    {
+     "blocks": [
+      {
+       "type": "paragraph",
+       "inlines": [
+        {
+         "type": "text",
+         "text": "третій"
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "blocks": [
+      {
+       "type": "paragraph",
+       "inlines": [
+        {
+         "type": "text",
+         "text": "четвертий"
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "paragraph",
+   "level": 2,
+   "inlines": [
+    {
+     "type": "text",
+     "text": "Таблиця"
+    }
+   ]
+  },
+  {
+   "type": "table",
+   "colWidths": [
+    120,
+    200,
+    161.9
+   ],
+   "rows": [
+    {
+     "cells": [
+      {
+       "header": true,
+       "blocks": [
+        {
+         "type": "paragraph",
+         "inlines": [
+          {
+           "type": "text",
+           "text": "Алгоритм"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "header": true,
+       "blocks": [
+        {
+         "type": "paragraph",
+         "inlines": [
+          {
+           "type": "text",
+           "text": "Складність"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "header": true,
+       "blocks": [
+        {
+         "type": "paragraph",
+         "inlines": [
+          {
+           "type": "text",
+           "text": "Час, мс"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "cells": [
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "inlines": [
+          {
+           "type": "text",
+           "text": "Бульбашка"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "inlines": [
+          {
+           "type": "text",
+           "text": "O(n²)"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "inlines": [
+          {
+           "type": "text",
+           "text": "1 250"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    },
+    {
+     "cells": [
+      {
+       "colspan": 2,
+       "background": "#f2f2f2",
+       "blocks": [
+        {
+         "type": "paragraph",
+         "inlines": [
+          {
+           "type": "text",
+           "text": "Швидке сортування — O(n log n)"
+          }
+         ]
+        }
+       ]
+      },
+      {
+       "blocks": [
+        {
+         "type": "paragraph",
+         "inlines": [
+          {
+           "type": "text",
+           "text": "12"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "leaf",
+   "kind": "image",
+   "width": 300,
+   "height": 180,
+   "data": "fig1.png"
+  },
+  {
+   "type": "paragraph",
+   "props": {
+    "align": "center"
+   },
+   "inlines": [
+    {
+     "type": "text",
+     "text": "Рисунок 1 – Залежність часу від розміру масиву"
+    }
+   ]
+  },
+  {
+   "type": "leaf",
+   "kind": "math",
+   "width": 160,
+   "height": 34,
+   "data": "T(n) = O(n \\log n)"
+  },
+  {
+   "type": "quote",
+   "blocks": [
+    {
+     "type": "paragraph",
+     "inlines": [
+      {
+       "type": "text",
+       "text": "Цитата з джерела."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "leaf",
+   "kind": "rule"
+  },
+  {
+   "type": "paragraph",
+   "props": {
+    "code": true
+   },
+   "inlines": [
+    {
+     "type": "text",
+     "text": "def sort(a):\n    return sorted(a)"
+    }
+   ]
+  },
+  {
+   "type": "paragraph"
+  }
+ ]
+}

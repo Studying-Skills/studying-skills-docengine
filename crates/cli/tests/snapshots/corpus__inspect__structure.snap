@@ -1,0 +1,23 @@
+---
+source: crates/cli/tests/corpus.rs
+assertion_line: 37
+expression: "sfdoc_cli::inspect(&doc)"
+---
+format 1 · page 210×297 mm · margins top 20 right 10 bottom 20 left 30 mm
+16 top-level blocks · size 343 · 21 text blocks · 251 UTF-16 units of text · 0 inline atoms · 6 leaf blocks
+  0      0..1      hidden                   
+  1      1..8      heading 1                Зміст
+  2      8..9      toc                      
+  3      9..10     pagebreak                
+  4     10..18     heading 2                Списки
+  5     18..84     bullet list, 2 items     перший пункт ¶ другий пункт ¶ вкладений а ¶ вкладений б
+  6     84..109    ordered list, 2 items    третій ¶ четвертий
+  7    109..118    heading 2                Таблиця
+  8    118..234    table, 3 rows            Алгоритм ¶ Складність ¶ Час, мс ¶ Бульбашка ¶ O(n²) ¶ 1 250 …
+  9    234..235    image                    
+ 10    235..283    paragraph                Рисунок 1 – Залежність часу від розміру масиву
+ 11    283..284    math                     
+ 12    284..305    quote                    Цитата з джерела.
+ 13    305..306    rule                     
+ 14    306..341    paragraph                def sort(a):⏎    return sorted(a)
+ 15    341..343    paragraph

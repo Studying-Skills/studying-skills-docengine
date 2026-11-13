@@ -1,0 +1,13 @@
+---
+source: crates/cli/tests/corpus.rs
+expression: "sfdoc_cli::inspect(&doc)"
+---
+format 1 · page 210×297 mm · margins top 20 right 10 bottom 20 left 30 mm
+7 top-level blocks · size 868 · 7 text blocks · 854 UTF-16 units of text · 0 inline atoms · 0 leaf blocks
+  0      0..24     heading 1                Лабораторна робота № 3
+  1     24..106    paragraph                Тема: Дослідження алгоритмів сортування та оцінювання їхньої…
+  2    106..300    paragraph                Мета роботи: навчитися реалізовувати базові алгоритми сортув…
+  3    300..312    heading 2                Хід роботи
+  4    312..711    paragraph                У роботі розглянуто три алгоритми: сортування бульбашкою, со…
+  5    711..721    heading 2                Висновки
+  6    721..868    paragraph                Отримані результати підтверджують теоретичні оцінки складнос…

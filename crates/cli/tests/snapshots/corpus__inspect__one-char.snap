@@ -1,0 +1,7 @@
+---
+source: crates/cli/tests/corpus.rs
+expression: "sfdoc_cli::inspect(&doc)"
+---
+format 1 · page 210×297 mm · margins top 20 right 10 bottom 20 left 30 mm
+1 top-level blocks · size 3 · 1 text blocks · 1 UTF-16 units of text · 0 inline atoms · 0 leaf blocks
+  0      0..3      paragraph                ї

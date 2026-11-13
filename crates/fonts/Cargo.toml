@@ -1,0 +1,15 @@
+[package]
+name = "sfdoc-fonts"
+description = "Fonts of the StudyFlow document engine: metrics, shaping, outlines, fallback"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rustybuzz = { workspace = true }
+thiserror = { workspace = true }

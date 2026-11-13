@@ -1,0 +1,22 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: wasm-pack
+        run: curl -sSfL https://github.com/wasm-bindgen/wasm-pack/releases/download/v0.15.1/wasm-pack-v0.15.1-x86_64-unknown-linux-musl.tar.gz | tar xz --strip-components=1 -C ~/.cargo/bin --wildcards '*/wasm-pack'
+      # L0–L3: formatting, lints, unit, property and snapshot tests, crate layers, the wasm build and its size budget.
+      - run: cargo xtask ci
+        env:
+          INSTA_UPDATE: "no"

@@ -1,0 +1,15 @@
+---
+source: crates/cli/tests/corpus.rs
+expression: layout
+---
+{
+  "pages": [
+    {
+      "size": {
+        "w": 595.27563,
+        "h": 841.8898
+      },
+      "items": []
+    }
+  ]
+}
