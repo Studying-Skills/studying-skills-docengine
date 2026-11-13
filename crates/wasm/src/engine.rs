@@ -44,6 +44,76 @@ impl Engine {
         })
     }
 
+    /// Text as an outline, for drawings that must not depend on the reader's fonts (words inside formulas): an SVG
+    /// path in units of 1/1000 of the font size, y up, starting at the origin, with the advance in the same units
+    /// in front: `"<advance> <path data>"`. Empty when no loaded font has one of the characters.
+    pub fn text_outline(&self, text: &str, family: &str, bold: bool, italic: bool) -> String {
+        struct Path {
+            d: String,
+            dx: f32,
+            k: f32,
+        }
+        impl Path {
+            fn xy(&mut self, x: f32, y: f32) {
+                use std::fmt::Write as _;
+                let _ = write!(
+                    self.d,
+                    "{} {}",
+                    ((x + self.dx) * self.k * 10.0).round() / 10.0,
+                    (y * self.k * 10.0).round() / 10.0
+                );
+            }
+            fn cmd(&mut self, c: char, pts: &[(f32, f32)]) {
+                self.d.push(c);
+                for (i, (x, y)) in pts.iter().enumerate() {
+                    if i > 0 {
+                        self.d.push(' ');
+                    }
+                    self.xy(*x, *y);
+                }
+            }
+        }
+        impl sfdoc_fonts::OutlineSink for Path {
+            fn move_to(&mut self, x: f32, y: f32) {
+                self.cmd('M', &[(x, y)]);
+            }
+            fn line_to(&mut self, x: f32, y: f32) {
+                self.cmd('L', &[(x, y)]);
+            }
+            fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+                self.cmd('Q', &[(x1, y1), (x, y)]);
+            }
+            fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+                self.cmd('C', &[(x1, y1), (x2, y2), (x, y)]);
+            }
+            fn close(&mut self) {
+                self.d.push('Z');
+            }
+        }
+        let family = (!family.is_empty()).then_some(family);
+        let Some(wanted) = self.fonts.resolve(family, bold, italic) else { return String::new() };
+        // One font for the whole piece: the wanted one, or the first that has every character.
+        let covers = |id: sfdoc_fonts::FontId| self.fonts.get(id).is_some_and(|f| text.chars().all(|c| f.covers(c)));
+        let id = if covers(wanted.id) {
+            wanted.id
+        } else {
+            match text.chars().find_map(|c| self.fonts.fallback_for(c, bold, italic).filter(|id| covers(*id))) {
+                Some(id) => id,
+                None => return String::new(),
+            }
+        };
+        let Some(font) = self.fonts.get(id) else { return String::new() };
+        let Ok(shaper) = font.shaper() else { return String::new() };
+        let mut path = Path { d: String::new(), dx: 0.0, k: 1000.0 / font.metrics().units_per_em };
+        let mut pen = 0.0f32;
+        for g in shaper.shape(text) {
+            path.dx = pen + g.x_offset;
+            shaper.outline(g.id, &mut path);
+            pen += g.x_advance;
+        }
+        format!("{} {}", (pen * path.k * 10.0).round() / 10.0, path.d)
+    }
+
     /// Replace the whole document; returns its content size. Page settings set earlier are kept unless the
     /// document states its own.
     pub fn set_document(&mut self, json: &str) -> Result<u32, String> {
@@ -244,6 +314,30 @@ mod tests {
         assert_eq!(e.line_move(3, true, c[1]).unwrap(), 11);
         assert_eq!(e.line_bounds(11).unwrap(), vec![9, 15]);
         assert_eq!(e.page_of(11).unwrap(), 0);
+    }
+
+    #[test]
+    fn text_becomes_an_outline_with_its_advance() {
+        let mut e = Engine::new();
+        assert_eq!(e.text_outline("а", "", false, false), "");
+        e.add_font(font()).unwrap();
+        let one = e.text_outline("с", "serif", false, false);
+        let (advance, d) = one.split_once(' ').unwrap();
+        // Liberation Serif: «с» is 0.444 em wide.
+        assert!((advance.parse::<f32>().unwrap() - 443.8).abs() < 0.2, "{advance}");
+        assert!(d.starts_with('M') && d.ends_with('Z') && d.contains('Q'));
+        // Two letters: the second outline starts after the first one's advance.
+        let two = e.text_outline("сс", "", false, false);
+        assert!((two.split_once(' ').unwrap().0.parse::<f32>().unwrap() - 887.7).abs() < 0.3);
+        assert_eq!(two.matches('M').count(), 2 * d.matches('M').count());
+        // A space has an advance and no outline; a character no font has gives nothing.
+        assert_eq!(e.text_outline(" ", "", false, false), "250 ");
+        assert_eq!(e.text_outline("語", "", false, false), "");
+        // The PDF's formula reader takes the path as it is.
+        let svg = format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -800 1000 1000"><g transform="scale(1,-1)"><path d="{d}"/></g></svg>"#
+        );
+        assert!(sfdoc_pdf::outline_svg::read(&svg).is_some());
     }
 
     #[test]

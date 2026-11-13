@@ -36,6 +36,13 @@ impl Engine {
         self.0.font_metrics(index)
     }
 
+    /// Text as an SVG path in 1/1000 of the font size, y up: `"<advance> <path data>"`; empty when no loaded font
+    /// has the characters.
+    #[wasm_bindgen(js_name = textOutline)]
+    pub fn text_outline(&self, text: &str, family: &str, bold: bool, italic: bool) -> String {
+        self.0.text_outline(text, family, bold, italic)
+    }
+
     /// Replace the whole document (engine JSON); returns its content size.
     #[wasm_bindgen(js_name = setDocument)]
     pub fn set_document(&mut self, json: &str) -> Result<u32, JsError> {
