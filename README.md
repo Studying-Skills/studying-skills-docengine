@@ -10,6 +10,7 @@
 | 1 | `sfdoc-fonts` | шрифти: метрики, формування гліфів, запасні шрифти |
 | 2 | `sfdoc-layout` | верстка й список відображення |
 | 3 | `sfdoc-raster` | PNG сторінки (тести й утиліта) |
+| 3 | `sfdoc-pdf` | PDF зі списку відображення |
 | 4 | `sfdoc-wasm` | прив'язки до JavaScript |
 | 4 | `sfdoc-cli` | утиліта `sfdoc` |
 
@@ -23,4 +24,4 @@ cargo run -p sfdoc-cli -- inspect corpus/plain/doc.json
 cargo run -p sfdoc-cli -- render corpus/plain/doc.json -o page.png
 ```
 
-Звіт про перевірки ризиків: `docs/e0-report.md`. Викидні прототипи: `spikes/`.
+Архітектура: `docs/ARCHITECTURE.md`. Звіт про перевірки ризиків: `docs/e0-report.md`. Викидні прототипи: `spikes/`.
