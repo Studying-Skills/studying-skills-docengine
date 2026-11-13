@@ -982,6 +982,185 @@ fn pictures_lists_and_tables_live_inside_cells() {
     assert!(one.x > c[0].x + style::LIST_INDENT);
 }
 
+fn note(text: &str) -> Inline {
+    Inline::Atom(Atom { kind: AtomKind::Footnote, width: 0.0, height: 0.0, depth: 0.0, data: Some(text.into()) })
+}
+/// Texts of the drawn-only lines of a page, the page number (added last) left out.
+fn running_texts(l: &Layout, page: usize) -> Vec<String> {
+    let all: Vec<String> = l.pages[page].running.iter().map(line_text).collect();
+    let number = (page + 1).to_string();
+    match all.split_last() {
+        Some((last, rest)) if page > 0 && *last == number => rest.to_vec(),
+        _ => all,
+    }
+}
+const FLOOR: f32 = 841.8898 - 56.692_917;
+
+#[test]
+fn footnotes_sit_at_the_bottom_of_the_page_that_has_their_mark() {
+    let d = doc(vec![
+        para_of(vec![
+            t("Перше твердження"),
+            note("Джерело перше."),
+            t(" і друге"),
+            note("Джерело друге, з довшим текстом."),
+        ]),
+        para("Далі."),
+    ]);
+    let l = lay(&d);
+    let page = &l.pages[0];
+    assert_eq!(running_texts(&l, 0), vec!["1 Джерело перше.", "2 Джерело друге, з довшим текстом."]);
+    // 10 pt, single spacing; the last note ends exactly at the bottom margin; a short rule above the first.
+    let notes = &page.running;
+    assert!((notes[1].y + notes[1].line.height - FLOOR).abs() < 0.01);
+    assert!((notes[0].line.height - 10.0 * 2355.0 / 2048.0).abs() < 0.01);
+    assert!((notes[0].x - LEFT).abs() < 0.01);
+    let rule = page.decor.last().unwrap().0;
+    assert!((rule.w - TEXT_W / 3.0).abs() < 0.01 && rule.y < notes[0].y && rule.y > notes[0].y - flow::NOTE_SEPARATOR);
+    // The mark in the note is a superscript like the one in the text.
+    let first =
+        notes[0].line.frags.iter().find_map(|f| if let FragKind::Text(t) = &f.kind { Some(t) } else { None }).unwrap();
+    assert!(first.text == "1" && first.rise > 0.0);
+    // Notes hold no positions: a click on them answers from the text above.
+    let hit = l.hit_test(0, LEFT + 30.0, FLOOR - 5.0).unwrap();
+    assert!(hit >= d.content_size() - 6, "{hit}");
+    let display = l.page(0, &fonts()).unwrap();
+    assert!(display.items.iter().any(|i| matches!(i, Item::Glyphs(g) if g.text.starts_with("Джерело"))));
+}
+
+#[test]
+fn a_line_moves_to_the_next_page_together_with_its_footnote() {
+    // 29 lines, then a one-line paragraph with a footnote: the line alone would fit as the 30th, but not with its
+    // note under it.
+    let mut blocks = filler(29);
+    blocks.push(para_of(vec![t("З виноскою"), note("Текст виноски.")]));
+    blocks.push(para("Після."));
+    let l = lay(&doc(blocks));
+    assert_eq!(l.pages[0].entries.len(), 29);
+    assert!(running_texts(&l, 0).is_empty());
+    assert_eq!(running_texts(&l, 1), vec!["1 Текст виноски."]);
+    assert_eq!(line_text(lines(&l)[29].1), "З виноскою1");
+
+    // With room for both, text after the marked line stops above the notes.
+    let mut blocks = filler(20);
+    blocks.push(para_of(vec![t("З виноскою"), note(&"Довга виноска на кілька рядків. ".repeat(12))]));
+    blocks.extend(filler(20));
+    let l = lay(&doc(blocks));
+    let notes_top = l.pages[0].running.iter().map(|n| n.y).fold(f32::MAX, f32::min);
+    assert!(l.pages[0].running.len() >= 3);
+    assert!(l.pages[0].entries.iter().all(|e| e.bottom() <= notes_top - flow::NOTE_SEPARATOR + 0.05));
+    assert!(l.pages[0].entries.len() < 30 && l.pages.len() == 2);
+}
+
+#[test]
+fn footnotes_from_table_cells_and_later_pages_keep_their_numbers() {
+    let mut blocks = vec![
+        para_of(vec![t("Перша"), note("один")]),
+        table(
+            vec![200.0, 200.0],
+            vec![vec![cell_of(vec![para_of(vec![t("у клітинці"), note("два")])]), cell("поруч")]],
+        ),
+    ];
+    blocks.extend(filler(40));
+    blocks.push(para_of(vec![t("На другій сторінці"), note("три")]));
+    let l = lay(&doc(blocks));
+    assert_eq!(running_texts(&l, 0), vec!["1 один", "2 два"]);
+    assert_eq!(running_texts(&l, 1), vec!["3 три"]);
+    // Notes span the text area even when the mark is in a narrow cell.
+    assert!((l.pages[0].running[1].box_w - TEXT_W).abs() < 0.01);
+}
+
+fn toc(title: &str) -> Block {
+    Block::Leaf(Leaf {
+        kind: LeafKind::Toc,
+        width: 0.0,
+        height: 0.0,
+        data: (!title.is_empty()).then(|| title.to_owned()),
+    })
+}
+
+#[test]
+fn the_table_of_contents_lists_headings_with_dots_and_real_page_numbers() {
+    let mut blocks = vec![toc("Зміст"), leaf(LeafKind::PageBreak, 0.0, 0.0), heading(1, "Вступ")];
+    blocks.extend(filler(40));
+    blocks.push(heading(2, "Метод дослідження"));
+    blocks.extend(filler(40));
+    blocks.push(heading(1, "Висновки"));
+    let d = doc(blocks);
+    let l = lay(&d);
+    let rows = running_texts(&l, 0);
+    assert_eq!(rows[0], "Зміст");
+    // Title, then per heading: text, dots, number (dots and numbers are added last, after all the text).
+    assert_eq!(rows[1..4], ["Вступ", "Метод дослідження", "Висновки"]);
+    let numbers: Vec<&String> = rows[4..].iter().filter(|r| !r.starts_with('.')).collect();
+    assert_eq!(numbers, vec!["2", "3", "4"]);
+    assert!(rows[4..].iter().filter(|r| r.starts_with("....")).count() == 3);
+    let r = &l.pages[0].running;
+    let find = |s: &str| r.iter().find(|pl| line_text(pl) == s).unwrap();
+    // The title is centred and bold; a level-2 row is indented; numbers end at the right margin on the row's line.
+    let title = find("Зміст");
+    assert!((title.x + title.line.x + title.line.width / 2.0 - (LEFT + TEXT_W / 2.0)).abs() < 0.01);
+    assert!((find("Метод дослідження").line.x - 35.433).abs() < 0.01 && find("Вступ").line.x.abs() < 0.01);
+    let (two, intro) = (find("2"), find("Вступ"));
+    assert!((two.x + two.line.x + two.line.width - (LEFT + TEXT_W)).abs() < 0.01);
+    assert_eq!(two.y, intro.y);
+    // Dots run between the text and the number without touching either.
+    let dots = r.iter().find(|pl| line_text(pl).starts_with("....") && pl.y == intro.y).unwrap();
+    let (d0, d1) = (dots.x + dots.line.x, dots.x + dots.line.x + dots.line.width);
+    assert!(d0 > intro.x + intro.line.x + intro.line.width + 2.0 && d1 < two.x + two.line.x - 2.0, "{d0}..{d1}");
+    assert!(d1 > two.x + two.line.x - 8.0);
+    // The whole block is one position: a caret before it and after it, a click inside answers with it.
+    let box_ = boxes(&l).into_iter().find(|(_, b)| b.kind == LeafKind::Toc).unwrap().1;
+    assert_eq!(box_.pos, 0);
+    assert!(box_.rect.h > 4.0 * 24.0);
+    assert_eq!(l.hit_test(0, LEFT + 10.0, box_.rect.y + 30.0), Some(0));
+
+    // A renamed heading and a heading that moved to another page both show up, through the cache as well.
+    let f = fonts();
+    let mut lt = Layouter::new();
+    let mut d2 = d.clone();
+    lt.layout(&d2, &f).unwrap();
+    d2.replace_blocks(2, 3, vec![heading(1, "Вступ до теми")]).unwrap();
+    lt.replaced(2, 3, 1);
+    let renamed = lt.layout(&d2, &f).unwrap();
+    assert_eq!(renamed, layout(&d2, &f).unwrap());
+    assert!(renamed.pages[0].running.iter().any(|pl| line_text(pl) == "Вступ до теми"));
+    d2.replace_blocks(3, 3, filler(40)).unwrap();
+    lt.replaced(3, 3, 40);
+    let pushed = lt.layout(&d2, &f).unwrap();
+    assert_eq!(pushed, layout(&d2, &f).unwrap());
+    let nums: Vec<String> =
+        pushed.pages[0].running.iter().map(line_text).filter(|s| s.chars().all(|c| c.is_ascii_digit())).collect();
+    assert_eq!(nums, vec!["2", "4", "6"]);
+}
+
+#[test]
+fn a_table_of_contents_without_headings_or_longer_than_a_page() {
+    let l = lay(&doc(vec![toc(""), para("Текст.")]));
+    assert!(l.pages[0].running.is_empty());
+    assert_eq!(l.caret_rect(0).unwrap().page, 0);
+    assert_eq!(l.hit_test(0, LEFT, 0.0), Some(0));
+    // 70 headings: the contents take more than a page and continue on the next one.
+    let mut blocks = vec![toc("Зміст")];
+    blocks.extend((0..70).map(|i| heading(3, &format!("Пункт {i}"))));
+    let l = lay(&doc(blocks));
+    let on = |p: usize| running_texts(&l, p).iter().filter(|r| r.starts_with("Пункт")).count();
+    assert_eq!(on(0), 29);
+    assert_eq!(on(0) + on(1) + on(2), 70);
+    assert!(l.pages[0].running.iter().all(|pl| pl.y + pl.line.height <= FLOOR + 0.05));
+    // A long heading wraps before the number column.
+    let long = "Дуже довга назва розділу, яка не вміщується в один рядок змісту і тому переноситься на наступний";
+    let l = lay(&doc(vec![toc(""), heading(1, long)]));
+    let r = &l.pages[0].running;
+    assert!(
+        r.iter().filter(|pl| long.starts_with(line_text(pl).trim()) || long.ends_with(line_text(pl).trim())).count()
+            >= 2
+    );
+    let number = r.iter().find(|pl| line_text(pl) == "1").unwrap();
+    let last_text = r.iter().rfind(|pl| long.ends_with(line_text(pl).trim()) && !line_text(pl).is_empty()).unwrap();
+    assert_eq!(number.y, last_text.y);
+}
+
 // ---- property tests -------------------------------------------------------------------------------------------
 
 fn arb_words() -> impl Strategy<Value = String> {
@@ -1001,7 +1180,7 @@ fn arb_inlines() -> impl Strategy<Value = Vec<Inline>> {
         6 => (arb_words(), any::<bool>(), any::<bool>(), prop_oneof![Just(None), Just(Some(10.0f32)), Just(Some(20.0f32))])
             .prop_map(|(s, bold, italic, size)| tm(&s, Marks { bold, italic, size, ..Default::default() })),
         1 => (5.0f32..80.0, 5.0f32..40.0).prop_map(|(w, h)| Inline::Atom(Atom { kind: AtomKind::Math, width: w, height: h, depth: h / 4.0, data: None })),
-        1 => Just(Inline::Atom(Atom { kind: AtomKind::Footnote, width: 0.0, height: 0.0, depth: 0.0, data: None })),
+        1 => "[а-я ]{0,60}".prop_map(|s| Inline::Atom(Atom { kind: AtomKind::Footnote, width: 0.0, height: 0.0, depth: 0.0, data: Some(s) })),
         1 => Just(Inline::Atom(Atom { kind: AtomKind::Break, width: 0.0, height: 0.0, depth: 0.0, data: None })),
     ];
     proptest::collection::vec(piece, 0..4)
@@ -1020,6 +1199,7 @@ fn arb_block() -> impl Strategy<Value = Block> {
         Just(leaf(LeafKind::Rule, 0.0, 0.0)),
         Just(leaf(LeafKind::PageBreak, 0.0, 0.0)),
         Just(leaf(LeafKind::Hidden, 0.0, 0.0)),
+        Just(Block::Leaf(Leaf { kind: LeafKind::Toc, width: 0.0, height: 0.0, data: Some("Зміст".into()) })),
         (20.0f32..700.0, 20.0f32..900.0).prop_map(|(w, h)| leaf(LeafKind::Image, w, h)),
     ];
     prop_oneof![8 => p, 2 => l].prop_recursive(2, 12, 3, |inner| {

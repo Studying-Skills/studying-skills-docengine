@@ -70,16 +70,25 @@ impl Layouter {
         }
         let sh = Shapers::new(fonts);
         let width = (doc.page.width - doc.page.margin_left - doc.page.margin_right).max(1.0);
+        // A table of contents is made from every heading of the document, so the block that holds one is laid out
+        // again whenever a heading's text or level changes (their positions and pages are filled in at the end).
+        let mut headings = Vec::new();
+        flow::collect_headings(&doc.blocks, 0, &mut headings);
+        let toc_key = flow::headings_key(&headings);
         self.cache.resize(doc.blocks.len(), None);
         let mut flows = Vec::with_capacity(doc.blocks.len());
         let (mut pos, mut footnotes) = (0u32, 0u32);
         for (block, slot) in doc.blocks.iter().zip(self.cache.iter_mut()) {
             // A cached result holds while the width is the same and, if the block numbers footnotes, while the
             // number of footnotes before it is the same.
-            let valid =
-                slot.as_ref().is_some_and(|f| f.width == width && (f.footnotes == 0 || f.footnote_base == footnotes));
+            let valid = slot.as_ref().is_some_and(|f| {
+                f.width == width
+                    && (f.footnotes == 0 || f.footnote_base == footnotes)
+                    && f.toc_key.is_none_or(|k| k == toc_key)
+            });
             if !valid {
-                *slot = Some(Arc::new(flow::flatten(block, width, footnotes, &sh).ok_or(LayoutError::NoFonts)?));
+                *slot =
+                    Some(Arc::new(flow::flatten(block, width, footnotes, &headings, &sh).ok_or(LayoutError::NoFonts)?));
             }
             if let Some(f) = slot {
                 footnotes += f.footnotes;
@@ -88,6 +97,7 @@ impl Layouter {
             pos += block.size();
         }
         let mut pages = flow::paginate(&doc.page, &flows);
+        flow::finish(&mut pages, &doc.page, &headings, &sh).ok_or(LayoutError::NoFonts)?;
         flow::add_running(&mut pages, &doc.page, &doc.running, &sh).ok_or(LayoutError::NoFonts)?;
         Ok(Layout { page: doc.page, pages, content_size: pos })
     }

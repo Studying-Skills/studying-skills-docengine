@@ -3,6 +3,7 @@ source: crates/cli/tests/corpus.rs
 expression: "sfdoc_cli::describe(&layout)"
 ---
 page 1 — 5 entries
+  running  y  773.70  x   85.04  w   19.08  1 fn1
   line  y   56.69  h  24.15  x  120.47  w  442.01      1..69    Звичайний, жирний, курсив, жирний курсив, підкреслений, закреслений.
   line  y   80.84  h  41.40  x  120.47  w  289.80     71..120   Розміри: 10 pt 14 pt 24 pt; колір червоний і тло.
   line  y  122.24  h  24.15  x  120.47  w  333.53    122..170   Індекси: x2 + H2O; формула в рядку [math] і виноска1.

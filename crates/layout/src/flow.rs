@@ -30,8 +30,68 @@ pub enum FlowItem {
     Para(ParaFlow),
     Box(BoxFlow),
     Table(TableFlow),
+    Toc(TocFlow),
     PageBreak { pos: u32 },
 }
+
+/// A heading of the document, as the table of contents needs it.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Heading {
+    pub level: u8,
+    pub text: String,
+    /// Document position of the heading's content start.
+    pub pos: u32,
+}
+
+/// The table of contents: its lines are known before the pages are (the page numbers and dot leaders are added
+/// once they are).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TocFlow {
+    /// Position of the contents block, relative to its top-level block.
+    pub pos: u32,
+    pub x: f32,
+    pub width: f32,
+    pub title: Vec<Arc<Line>>,
+    pub rows: Vec<TocRow>,
+    pub space_before: f32,
+    pub space_after: f32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct TocRow {
+    /// Index of the heading in the document's list of headings.
+    pub heading: usize,
+    pub lines: Vec<Arc<Line>>,
+}
+
+/// Where a contents row ended up: the page number and the dots go on its last line.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TocMark {
+    pub heading: usize,
+    /// Top of the row's last line, the left edge of the contents box, and its width.
+    pub y: f32,
+    pub x: f32,
+    pub width: f32,
+    /// Right end of the row's text, from `x`.
+    pub text_end: f32,
+}
+
+/// A footnote: the line of its paragraph that carries the mark, and the note's own lines (as wide as the page's
+/// text area, wherever the mark is).
+#[derive(Clone, Debug, PartialEq)]
+pub struct NoteFlow {
+    pub line: usize,
+    pub lines: Vec<Arc<Line>>,
+    pub height: f32,
+}
+
+/// Space the footnote area takes above its first note: a gap, the separator rule, a gap.
+pub const NOTE_SEPARATOR: f32 = 10.0;
+const NOTE_RULE_OFFSET: f32 = 6.0;
+/// Room kept at the right of a contents row for the page number.
+const TOC_NUMBER_COLUMN: f32 = 28.0;
+const TOC_LEVEL_INDENT: f32 = 35.433_07;
+const TOC_GAP: f32 = 4.0;
 
 /// Cell padding left and right (Word's default 0.19 cm) and above and below the content.
 pub const CELL_PAD_X: f32 = 5.4;
@@ -108,6 +168,7 @@ fn stack_height(items: &[FlowItem]) -> f32 {
             FlowItem::Para(p) => (p.space_before, p.lines.iter().map(|l| l.height).sum::<f32>(), p.space_after),
             FlowItem::Box(b) => (b.space_before, b.h, b.space_after),
             FlowItem::Table(t) => (t.space_before, t.height(), t.space_after),
+            FlowItem::Toc(t) => (t.space_before, toc_lines(t).map(|l| l.height).sum::<f32>(), t.space_after),
             FlowItem::PageBreak { .. } => continue,
         };
         h += if first { 0.0 } else { pending + before } + body;
@@ -132,6 +193,8 @@ pub struct ParaFlow {
     pub page_break_before: bool,
     /// Fill behind every line (code blocks).
     pub background: Option<Color>,
+    /// Footnotes whose marks are in this paragraph, in order.
+    pub notes: Vec<NoteFlow>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -155,6 +218,8 @@ pub struct BlockFlow {
     pub footnotes: u32,
     pub footnote_base: u32,
     pub width: f32,
+    /// Set when the block holds a table of contents: what its rows were made from (a hash of the headings).
+    pub toc_key: Option<u64>,
 }
 
 fn roman(mut n: u32) -> String {
@@ -224,6 +289,19 @@ struct Flattener<'a, 'f> {
     out: Vec<FlowItem>,
     footnote_base: u32,
     footnotes: u32,
+    /// Width of the page's text area: footnotes are laid out in it wherever their mark is.
+    page_width: f32,
+    headings: &'a [Heading],
+    has_toc: bool,
+}
+
+/// Every line of a table of contents, top to bottom.
+fn toc_lines(t: &TocFlow) -> impl Iterator<Item = &Arc<Line>> {
+    t.title.iter().chain(t.rows.iter().flat_map(|r| r.lines.iter()))
+}
+
+fn plain(text: &str, marks: sfdoc_model::Marks) -> sfdoc_model::Inline {
+    sfdoc_model::Inline::Text(sfdoc_model::Text { text: text.to_owned(), marks })
 }
 
 impl Flattener<'_, '_> {
@@ -237,11 +315,43 @@ impl Flattener<'_, '_> {
             footnote_base: self.footnote_base + self.footnotes,
         };
         let lines = layout_paragraph(&inp, self.sh)?;
-        self.footnotes += p
-            .inlines
-            .iter()
-            .filter(|i| matches!(i, sfdoc_model::Inline::Atom(a) if a.kind == sfdoc_model::AtomKind::Footnote))
-            .count() as u32;
+        // Footnotes: which line carries each mark, and the note's text laid out for the bottom of the page.
+        let mut notes = Vec::new();
+        let mut offset = 0u32;
+        for inline in &p.inlines {
+            match inline {
+                sfdoc_model::Inline::Text(t) => offset += sfdoc_model::utf16_len(&t.text),
+                sfdoc_model::Inline::Atom(a) => {
+                    if a.kind == sfdoc_model::AtomKind::Footnote {
+                        self.footnotes += 1;
+                        let number = (self.footnote_base + self.footnotes).to_string();
+                        let sup = sfdoc_model::Marks { vert: sfdoc_model::VertAlign::Sup, ..Default::default() };
+                        let body = format!(" {}", a.data.as_deref().unwrap_or(""));
+                        let note = Paragraph {
+                            inlines: vec![plain(&number, sup), plain(&body, Default::default())],
+                            ..Default::default()
+                        };
+                        let note_style = para_style(&note, Context::Footnote);
+                        let note_inp = ParaInput {
+                            para: &note,
+                            style: &note_style,
+                            width: self.page_width,
+                            marker: None,
+                            footnote_base: 0,
+                        };
+                        let note_lines: Vec<Arc<Line>> =
+                            layout_paragraph(&note_inp, self.sh)?.into_iter().map(Arc::new).collect();
+                        let line = lines
+                            .iter()
+                            .position(|l| offset >= l.from && offset < l.to)
+                            .unwrap_or(lines.len().saturating_sub(1));
+                        let height = note_lines.iter().map(|l| l.height).sum();
+                        notes.push(NoteFlow { line, lines: note_lines, height });
+                    }
+                    offset += 1;
+                }
+            }
+        }
         let code = style.code;
         self.out.push(FlowItem::Para(ParaFlow {
             lines: lines.into_iter().map(Arc::new).collect(),
@@ -254,6 +364,51 @@ impl Flattener<'_, '_> {
             keep_lines: style.keep_lines,
             page_break_before: style.page_break_before,
             background: code.then_some(CODE_BLOCK_COLOR),
+            notes,
+        }));
+        Some(())
+    }
+
+    /// The table of contents: a centred bold title (the leaf's `data`) and one row per heading, indented by level.
+    fn toc(&mut self, l: &Leaf, x: f32, width: f32, pos: u32) -> Option<()> {
+        self.has_toc = true;
+        let base = |align: Align, left: f32, right: f32, bold: bool| ParaStyle {
+            align,
+            line_mult: 1.5,
+            left,
+            right,
+            first: 0.0,
+            space_before: 0.0,
+            space_after: 0.0,
+            keep_next: false,
+            keep_lines: false,
+            page_break_before: false,
+            code: false,
+            text: TextDefaults { family: crate::style::BODY_FONT, size: crate::style::BODY_SIZE, bold, italic: false },
+        };
+        let lines_of = |text: &str, style: &ParaStyle, sh: &Shapers<'_>| -> Option<Vec<Arc<Line>>> {
+            let para = Paragraph { inlines: vec![plain(text, Default::default())], ..Default::default() };
+            let inp = ParaInput { para: &para, style, width, marker: None, footnote_base: 0 };
+            Some(layout_paragraph(&inp, sh)?.into_iter().map(Arc::new).collect())
+        };
+        let title = match l.data.as_deref().map(str::trim).filter(|t| !t.is_empty()) {
+            Some(t) => lines_of(t, &base(Align::Center, 0.0, 0.0, true), self.sh)?,
+            None => Vec::new(),
+        };
+        let mut rows = Vec::with_capacity(self.headings.len());
+        for (i, h) in self.headings.iter().enumerate() {
+            let indent = (f32::from(h.level.clamp(1, 3)) - 1.0) * TOC_LEVEL_INDENT;
+            let style = base(Align::Left, indent.min(width / 2.0), TOC_NUMBER_COLUMN.min(width / 4.0), false);
+            rows.push(TocRow { heading: i, lines: lines_of(&h.text, &style, self.sh)? });
+        }
+        self.out.push(FlowItem::Toc(TocFlow {
+            pos,
+            x,
+            width,
+            title,
+            rows,
+            space_before: BLOCK_GAP,
+            space_after: 2.0 * BLOCK_GAP,
         }));
         Some(())
     }
@@ -302,6 +457,7 @@ impl Flattener<'_, '_> {
         for b in blocks {
             match b {
                 Block::Paragraph(p) => self.para(p, ctx, x, width, pos, marker.take())?,
+                Block::Leaf(l) if l.kind == LeafKind::Toc => self.toc(l, x, width, pos)?,
                 Block::Leaf(l) => self.leaf(l, x, width, pos),
                 Block::List(list) => {
                     let mut at = pos + 1;
@@ -556,6 +712,8 @@ impl Flattener<'_, '_> {
             Some(FlowItem::Box(b)) => b.space_after += BLOCK_GAP,
             Some(FlowItem::Table(t)) if before => t.space_before += BLOCK_GAP,
             Some(FlowItem::Table(t)) => t.space_after += BLOCK_GAP,
+            Some(FlowItem::Toc(t)) if before => t.space_before += BLOCK_GAP,
+            Some(FlowItem::Toc(t)) => t.space_after += BLOCK_GAP,
             _ => {}
         };
         if self.out.len() > first {
@@ -565,11 +723,71 @@ impl Flattener<'_, '_> {
     }
 }
 
-/// Flow items of one top-level block for a text area `width` wide.
-pub fn flatten(block: &Block, width: f32, footnote_base: u32, sh: &Shapers<'_>) -> Option<BlockFlow> {
-    let mut f = Flattener { sh, out: Vec::new(), footnote_base, footnotes: 0 };
+/// A hash of what a table of contents is built from.
+pub fn headings_key(headings: &[Heading]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for x in headings {
+        (x.level, &x.text).hash(&mut h);
+    }
+    h.finish()
+}
+
+/// Flow items of one top-level block for a text area `width` wide. `headings` are the document's headings: a
+/// block with a table of contents is built from them.
+pub fn flatten(
+    block: &Block,
+    width: f32,
+    footnote_base: u32,
+    headings: &[Heading],
+    sh: &Shapers<'_>,
+) -> Option<BlockFlow> {
+    let mut f =
+        Flattener { sh, out: Vec::new(), footnote_base, footnotes: 0, page_width: width, headings, has_toc: false };
     f.blocks(std::slice::from_ref(block), Context::Body, 0.0, width, 0, None)?;
-    Some(BlockFlow { items: f.out, footnotes: f.footnotes, footnote_base, width })
+    let toc_key = f.has_toc.then(|| headings_key(headings));
+    Some(BlockFlow { items: f.out, footnotes: f.footnotes, footnote_base, width, toc_key })
+}
+
+/// The headings of a document in order, wherever they are nested. `pos` is the position of the first block.
+pub fn collect_headings(blocks: &[Block], mut pos: u32, out: &mut Vec<Heading>) {
+    for b in blocks {
+        match b {
+            Block::Paragraph(p) if p.level > 0 => {
+                let mut text = String::new();
+                for i in &p.inlines {
+                    if let sfdoc_model::Inline::Text(t) = i {
+                        text.push_str(&t.text);
+                    }
+                }
+                let text = text.trim();
+                if !text.is_empty() {
+                    out.push(Heading { level: p.level, text: text.to_owned(), pos: pos + 1 });
+                }
+            }
+            Block::Paragraph(_) | Block::Leaf(_) => {}
+            Block::List(list) => {
+                let mut at = pos + 1;
+                for item in &list.items {
+                    collect_headings(&item.blocks, at + 1, out);
+                    at += 2 + item.blocks.iter().map(Block::size).sum::<u32>();
+                }
+            }
+            Block::Quote(q) => collect_headings(&q.blocks, pos + 1, out),
+            Block::Table(t) => {
+                let mut at = pos + 1;
+                for row in &t.rows {
+                    at += 1;
+                    for cell in &row.cells {
+                        collect_headings(&cell.blocks, at + 1, out);
+                        at += 2 + cell.blocks.iter().map(Block::size).sum::<u32>();
+                    }
+                    at += 1;
+                }
+            }
+        }
+        pos += b.size();
+    }
 }
 
 /// A line put on a page.
@@ -640,8 +858,34 @@ pub struct PageLayout {
     /// Table cells on this page (entries point here through `region`); a nested table's cells come after the
     /// cell that holds it.
     pub cells: Vec<Rect>,
-    /// Filled rectangles under the text: cell shading and the table grid.
+    /// Filled rectangles under the text: cell shading, the table grid, the footnote separator.
     pub decor: Vec<(Rect, Color)>,
+    /// Footnotes whose marks are on this page, in order; `finish` lays them out at the bottom.
+    pub notes: Vec<Vec<Arc<Line>>>,
+    /// Rows of a table of contents on this page that still wait for their page number.
+    pub toc_marks: Vec<TocMark>,
+}
+
+impl PageLayout {
+    /// Height the footnotes take at the bottom of the page.
+    pub fn notes_height(&self) -> f32 {
+        if self.notes.is_empty() {
+            return 0.0;
+        }
+        NOTE_SEPARATOR + self.notes.iter().flatten().map(|l| l.height).sum::<f32>()
+    }
+}
+
+/// Height of the footnotes that come with `items` (a cell's or a row's content).
+fn notes_in(items: &[FlowItem]) -> f32 {
+    items
+        .iter()
+        .map(|i| match i {
+            FlowItem::Para(p) => p.notes.iter().map(|n| n.height).sum::<f32>(),
+            FlowItem::Table(t) => t.rows.iter().flat_map(|r| r.cells.iter()).map(|c| notes_in(&c.items)).sum(),
+            _ => 0.0,
+        })
+        .sum()
 }
 
 /// Where the placement of a cell's (or any box's) content stopped.
@@ -694,6 +938,7 @@ fn place_some(
                         page.running.push(line);
                     } else {
                         page.entries.push(Entry::Line(line));
+                        page.notes.extend(p.notes.iter().filter(|n| n.line == cur.line).map(|n| n.lines.clone()));
                     }
                     used += g + l.height;
                     cur.line += 1;
@@ -729,6 +974,23 @@ fn place_some(
                 cur.pending = b.space_after;
                 force = false;
             }
+            FlowItem::Toc(t) => {
+                // Inside a cell a table of contents is one unsplittable block.
+                let g = gap(t.space_before, cur);
+                let h: f32 = toc_lines(t).map(|l| l.height).sum();
+                if used + g + h > room + 0.01 && !force {
+                    return used;
+                }
+                let top = y + used + g;
+                if !ghost {
+                    place_toc_lines(t, 0, usize::MAX, start, left, top, region, page);
+                }
+                used += g + h;
+                cur.item += 1;
+                cur.started = true;
+                cur.pending = t.space_after;
+                force = false;
+            }
             FlowItem::Table(t) => {
                 // A table inside a cell is never split.
                 let g = gap(t.space_before, cur);
@@ -746,6 +1008,66 @@ fn place_some(
         }
     }
     used
+}
+
+/// Draw lines `from..to` of a table of contents (title lines first) from `y` down; returns the height used. The
+/// lines hold no positions of their own: the whole block is one position, so each drawn part gets one box entry.
+#[allow(clippy::too_many_arguments)]
+fn place_toc_lines(
+    t: &TocFlow,
+    from: usize,
+    to: usize,
+    start: u32,
+    left: f32,
+    y: f32,
+    region: u16,
+    page: &mut PageLayout,
+) -> f32 {
+    let mut top = y;
+    let mut index = 0usize;
+    let mut draw = |l: &Arc<Line>, mark: Option<usize>, page: &mut PageLayout| {
+        if index >= from && index < to {
+            page.running.push(PlacedLine {
+                line: Arc::clone(l),
+                x: left + t.x,
+                y: top,
+                box_w: t.width,
+                base: 0,
+                background: None,
+                region: 0,
+            });
+            if let Some(heading) = mark {
+                page.toc_marks.push(TocMark {
+                    heading,
+                    y: top,
+                    x: left + t.x,
+                    width: t.width,
+                    text_end: l.x + l.width,
+                });
+            }
+            top += l.height;
+        }
+        index += 1;
+    };
+    for l in &t.title {
+        draw(l, None, page);
+    }
+    for row in &t.rows {
+        let last = row.lines.len().saturating_sub(1);
+        for (i, l) in row.lines.iter().enumerate() {
+            draw(l, (i == last).then_some(row.heading), page);
+        }
+    }
+    if top > y {
+        page.entries.push(Entry::Box(PlacedBox {
+            rect: Rect::new(left + t.x, y, t.width, top - y),
+            pos: start + t.pos,
+            kind: LeafKind::Toc,
+            data: None,
+            region,
+        }));
+    }
+    top - y
 }
 
 /// The frame and shading of one cell.
@@ -827,8 +1149,23 @@ impl Paginator<'_> {
     fn top(&self) -> f32 {
         self.page.margin_top
     }
-    fn bottom(&self) -> f32 {
+    /// Bottom of the text area, footnotes not counted.
+    fn floor(&self) -> f32 {
         (self.page.height - self.page.margin_bottom).max(self.top() + 1.0)
+    }
+    /// How far down text may go on the current page: above the footnotes already on it.
+    fn bottom(&self) -> f32 {
+        self.floor() - self.pages.last().map_or(0.0, PageLayout::notes_height)
+    }
+    /// Extra room footnotes `h` tall would take on the current page (the separator comes with the first).
+    fn note_cost(&self, h: f32) -> f32 {
+        if h <= 0.0 {
+            0.0
+        } else if self.pages.last().is_some_and(|p| p.notes.is_empty()) {
+            h + NOTE_SEPARATOR
+        } else {
+            h
+        }
     }
     fn at_top(&self) -> bool {
         self.pages.last().is_none_or(|p| p.entries.is_empty())
@@ -859,6 +1196,7 @@ fn first_chunk(item: &FlowItem) -> f32 {
         FlowItem::Box(b) => b.space_before + b.h,
         // The header rows and the first row under them.
         FlowItem::Table(t) => t.space_before + t.rows_height(0, t.group_end(t.header_rows)),
+        FlowItem::Toc(t) => t.space_before + toc_lines(t).take(2).map(|l| l.height).sum::<f32>(),
         FlowItem::PageBreak { .. } => 0.0,
     }
 }
@@ -868,6 +1206,7 @@ fn full_height(item: &FlowItem) -> f32 {
         FlowItem::Para(p) => p.space_before + p.lines.iter().map(|l| l.height).sum::<f32>() + p.space_after,
         FlowItem::Box(b) => b.space_before + b.h + b.space_after,
         FlowItem::Table(t) => t.space_before + t.height() + t.space_after,
+        FlowItem::Toc(t) => t.space_before + toc_lines(t).map(|l| l.height).sum::<f32>() + t.space_after,
         FlowItem::PageBreak { .. } => 0.0,
     }
 }
@@ -879,7 +1218,7 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
     let left = page.margin_left;
     let items: Vec<(u32, &FlowItem)> =
         flows.iter().flat_map(|(start, f)| f.items.iter().map(move |i| (*start, i))).collect();
-    let page_h = pg.bottom() - pg.top();
+    let page_h = pg.floor() - pg.top();
 
     for (idx, (start, item)) in items.iter().enumerate() {
         // Keep with next: this item and everything chained to it must be followed, on the same page, by the
@@ -952,8 +1291,19 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                     let end = t.group_end(r);
                     let h = t.rows_height(r, end);
                     let gap = if r == 0 { pg.gap(t.space_before) } else { 0.0 };
-                    let fresh_room = page_h - if r >= t.header_rows { header_h } else { 0.0 };
-                    if pg.y + gap + h <= pg.bottom() + 0.01 {
+                    // Footnotes of these rows come to the same page: they need their room at its bottom.
+                    let notes: f32 = t
+                        .rows
+                        .iter()
+                        .take(end)
+                        .skip(r)
+                        .flat_map(|row| row.cells.iter())
+                        .map(|c| notes_in(&c.items))
+                        .sum();
+                    let fresh_room = page_h
+                        - if r >= t.header_rows { header_h } else { 0.0 }
+                        - if notes > 0.0 { notes + NOTE_SEPARATOR } else { 0.0 };
+                    if pg.y + gap + h + pg.note_cost(notes) <= pg.bottom() + 0.01 {
                         let y = pg.y + gap;
                         if let Some(page) = pg.pages.last_mut() {
                             place_rows(t, r, end, *start, left, y, false, page);
@@ -1041,22 +1391,75 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                 }
                 pg.pending = t.space_after;
             }
+            FlowItem::Toc(t) => {
+                let heights: Vec<f32> = toc_lines(t).map(|l| l.height).collect();
+                let n = heights.len();
+                let mut next = 0usize;
+                if n == 0 {
+                    // No title and no headings: still a place for the caret.
+                    let y = pg.y + pg.gap(t.space_before);
+                    pg.push(Entry::Box(PlacedBox {
+                        rect: Rect::new(left + t.x, y.min(pg.bottom()), t.width, 0.0),
+                        pos: start + t.pos,
+                        kind: LeafKind::Toc,
+                        data: None,
+                        region: 0,
+                    }));
+                }
+                while next < n {
+                    let gap = if next == 0 { pg.gap(t.space_before) } else { 0.0 };
+                    let room = pg.bottom() - pg.y - gap + 0.01;
+                    let mut fit = 0usize;
+                    let mut used = 0.0f32;
+                    for h in heights.iter().skip(next) {
+                        if used + h > room {
+                            break;
+                        }
+                        used += h;
+                        fit += 1;
+                    }
+                    if fit == 0 {
+                        if pg.at_top() && pg.y <= pg.top() + 0.01 {
+                            fit = 1;
+                        } else {
+                            pg.new_page();
+                            continue;
+                        }
+                    }
+                    let y = pg.y + gap;
+                    let mut placed = 0.0;
+                    if let Some(page) = pg.pages.last_mut() {
+                        placed = place_toc_lines(t, next, next + fit, *start, left, y, 0, page);
+                    }
+                    pg.y = y + placed;
+                    next += fit;
+                    if next < n {
+                        pg.new_page();
+                    }
+                }
+                pg.pending = t.space_after;
+            }
             FlowItem::Para(p) => {
                 if p.page_break_before && !pg.at_top() {
                     pg.new_page();
                 }
                 let mut next = 0usize;
                 let n = p.lines.len();
+                let note_h = |i: usize| p.notes.iter().filter(|x| x.line == i).map(|x| x.height).sum::<f32>();
                 while next < n {
                     let gap = if next == 0 { pg.gap(p.space_before) } else { 0.0 };
                     let room = pg.bottom() - pg.y - gap + 0.01;
                     let mut fit = 0usize;
                     let mut used = 0.0f32;
-                    for l in p.lines.iter().skip(next) {
-                        if used + l.height > room {
+                    // A line comes with its footnotes: both must fit, the notes at the bottom of the page.
+                    let mut notes = 0.0f32;
+                    for (i, l) in p.lines.iter().enumerate().skip(next) {
+                        let with = notes + note_h(i);
+                        if used + l.height + pg.note_cost(with) > room {
                             break;
                         }
                         used += l.height;
+                        notes = with;
                         fit += 1;
                     }
                     let left_over = n - next - fit;
@@ -1081,7 +1484,7 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                         }
                     }
                     let mut y = pg.y + gap;
-                    for l in p.lines.iter().skip(next).take(fit) {
+                    for (i, l) in p.lines.iter().enumerate().skip(next).take(fit) {
                         pg.push(Entry::Line(PlacedLine {
                             line: Arc::clone(l),
                             x: left + p.x,
@@ -1091,6 +1494,9 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                             background: p.background,
                             region: 0,
                         }));
+                        if let Some(page) = pg.pages.last_mut() {
+                            page.notes.extend(p.notes.iter().filter(|x| x.line == i).map(|x| x.lines.clone()));
+                        }
                         y += l.height;
                     }
                     pg.y = y;
@@ -1108,6 +1514,109 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
 
 fn pos_of(b: &BoxFlow) -> u32 {
     b.pos
+}
+
+/// What is known only once the pages are: footnotes go to the bottom of their pages, rows of a table of contents get
+/// their dot leaders and page numbers.
+pub fn finish(pages: &mut [PageLayout], page: &PageSetup, headings: &[Heading], sh: &Shapers<'_>) -> Option<()> {
+    let left = page.margin_left;
+    let width = (page.width - page.margin_left - page.margin_right).max(1.0);
+    let floor = (page.height - page.margin_bottom).max(page.margin_top + 1.0);
+    for p in pages.iter_mut() {
+        let total = p.notes_height();
+        if total <= 0.0 {
+            continue;
+        }
+        // A page overfull with notes (one note taller than the page) starts them at the top margin.
+        let top = (floor - total).max(page.margin_top);
+        p.decor.push((Rect::new(left, top + NOTE_RULE_OFFSET, width / 3.0, TABLE_BORDER), Color::BLACK));
+        let mut y = top + NOTE_SEPARATOR;
+        for l in std::mem::take(&mut p.notes).into_iter().flatten() {
+            let h = l.height;
+            p.running.push(PlacedLine { line: l, x: left, y, box_w: width, base: 0, background: None, region: 0 });
+            y += h;
+        }
+    }
+
+    if pages.iter().all(|p| p.toc_marks.is_empty()) {
+        return Some(());
+    }
+    // The page every heading starts on.
+    let mut page_of: Vec<Option<usize>> = vec![None; headings.len()];
+    for (i, p) in pages.iter().enumerate() {
+        for e in &p.entries {
+            if let Entry::Line(l) = e
+                && l.line.from == 0
+                && let Ok(h) = headings.binary_search_by_key(&l.base, |h| h.pos)
+                && let Some(slot) = page_of.get_mut(h)
+                && slot.is_none()
+            {
+                *slot = Some(i + 1);
+            }
+        }
+    }
+    let style = |align: Align, left: f32| ParaStyle {
+        align,
+        line_mult: 1.5,
+        left,
+        right: 0.0,
+        first: 0.0,
+        space_before: 0.0,
+        space_after: 0.0,
+        keep_next: false,
+        keep_lines: false,
+        page_break_before: false,
+        code: false,
+        text: TextDefaults {
+            family: crate::style::BODY_FONT,
+            size: crate::style::BODY_SIZE,
+            bold: false,
+            italic: false,
+        },
+    };
+    let line_of = |text: &str, st: &ParaStyle, w: f32| -> Option<Option<Line>> {
+        let para = Paragraph { inlines: vec![plain(text, Default::default())], ..Default::default() };
+        Some(
+            layout_paragraph(&ParaInput { para: &para, style: st, width: w, marker: None, footnote_base: 0 }, sh)?
+                .into_iter()
+                .next(),
+        )
+    };
+    let dot = line_of(".", &style(Align::Left, 0.0), 1.0e4)?.map_or(3.5, |l| l.width).max(0.5);
+    for p in pages.iter_mut() {
+        for m in std::mem::take(&mut p.toc_marks) {
+            let Some(Some(number)) = page_of.get(m.heading).copied() else { continue };
+            let Some(num) = line_of(&number.to_string(), &style(Align::Right, 0.0), m.width)? else { continue };
+            let num_left = m.width - num.width;
+            // Dots from the end of the text to the number, ending flush before it.
+            let room = num_left - TOC_GAP - (m.text_end + TOC_GAP);
+            let count = (room / dot).floor();
+            if count >= 3.0 {
+                let from = num_left - TOC_GAP - count * dot;
+                if let Some(dots) = line_of(&".".repeat(count as usize), &style(Align::Left, from), 1.0e4)? {
+                    p.running.push(PlacedLine {
+                        line: Arc::new(dots),
+                        x: m.x,
+                        y: m.y,
+                        box_w: m.width,
+                        base: 0,
+                        background: None,
+                        region: 0,
+                    });
+                }
+            }
+            p.running.push(PlacedLine {
+                line: Arc::new(num),
+                x: m.x,
+                y: m.y,
+                box_w: m.width,
+                base: 0,
+                background: None,
+                region: 0,
+            });
+        }
+    }
+    Some(())
 }
 
 /// Add header and footer lines to every page (not to a title page).
