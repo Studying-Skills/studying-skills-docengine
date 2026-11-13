@@ -136,7 +136,7 @@ impl Font {
     /// A shaper borrowing this font. Parsing the face is cheap but not free: make one per layout pass, not per word.
     pub fn shaper(&self) -> Result<Shaper<'_>, FontError> {
         let face = rustybuzz::Face::from_slice(&self.data, self.index).ok_or(FontError::Unreadable)?;
-        Ok(Shaper { face, upm: self.metrics.units_per_em })
+        Ok(Shaper { face, upm: self.metrics.units_per_em, plans: std::cell::RefCell::new(Vec::new()) })
     }
 }
 
@@ -191,6 +191,9 @@ impl ttf_parser::OutlineBuilder for SinkAdapter<'_> {
 pub struct Shaper<'a> {
     face: rustybuzz::Face<'a>,
     upm: f32,
+    /// Shaping plans by script and language. Making a plan (choosing the font's lookups) costs more than shaping
+    /// a short word with it, and a report has two or three scripts.
+    plans: std::cell::RefCell<Vec<(rustybuzz::Script, Option<rustybuzz::Language>, rustybuzz::ShapePlan)>>,
 }
 
 impl Shaper<'_> {
@@ -202,7 +205,23 @@ impl Shaper<'_> {
         let mut buf = rustybuzz::UnicodeBuffer::new();
         buf.push_str(text);
         buf.set_direction(rustybuzz::Direction::LeftToRight);
-        let out = rustybuzz::shape(&self.face, &[], buf);
+        buf.guess_segment_properties();
+        let (script, language) = (buf.script(), buf.language());
+        let mut plans = self.plans.borrow_mut();
+        let known = plans.iter().position(|(s, l, _)| *s == script && *l == language);
+        let index = known.unwrap_or_else(|| {
+            let plan = rustybuzz::ShapePlan::new(
+                &self.face,
+                rustybuzz::Direction::LeftToRight,
+                Some(script),
+                language.as_ref(),
+                &[],
+            );
+            plans.push((script, language.clone(), plan));
+            plans.len() - 1
+        });
+        let Some((_, _, plan)) = plans.get(index) else { return Vec::new() };
+        let out = rustybuzz::shape_with_plan(&self.face, plan, buf);
         out.glyph_infos()
             .iter()
             .zip(out.glyph_positions())

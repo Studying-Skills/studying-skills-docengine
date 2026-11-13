@@ -20,3 +20,7 @@ jobs:
       - run: cargo xtask ci
         env:
           INSTA_UPDATE: "no"
+      # L7: speed. A 70-page report; the median keystroke (layout, page fingerprints, the display list of its page)
+      # must stay under 8 ms natively: the browser build is about twice slower and has one 16 ms frame for it.
+      - name: speed budget
+        run: cargo run --release -p sfdoc-cli -- bench 50 8 --fonts assets/fonts

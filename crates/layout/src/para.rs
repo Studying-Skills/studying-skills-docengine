@@ -96,6 +96,46 @@ pub struct Line {
     pub width: f32,
     /// The line ends its paragraph or ends with a forced break (such lines are never justified).
     pub hard: bool,
+    /// Hash of what the line looks like (not of where it is or which positions it holds): page fingerprints are
+    /// made of these, so an unchanged line is hashed once, not on every keystroke.
+    pub look: u64,
+}
+
+/// See [`Line::look`].
+fn look_of(height: f32, baseline: f32, descent: f32, frags: &[Frag]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for v in [height, baseline, descent] {
+        v.to_bits().hash(&mut h);
+    }
+    frags.len().hash(&mut h);
+    for f in frags {
+        f.x.to_bits().hash(&mut h);
+        f.advance.to_bits().hash(&mut h);
+        match &f.kind {
+            FragKind::Text(t) => {
+                0u8.hash(&mut h);
+                t.text.hash(&mut h);
+                t.font.0.hash(&mut h);
+                t.size.to_bits().hash(&mut h);
+                t.rise.to_bits().hash(&mut h);
+                t.color.hash(&mut h);
+                t.background.hash(&mut h);
+                (t.underline, t.strike).hash(&mut h);
+                t.link.hash(&mut h);
+            }
+            FragKind::Atom { kind, width, height, depth, data } => {
+                1u8.hash(&mut h);
+                (*kind as u8).hash(&mut h);
+                for v in [width, height, depth] {
+                    v.to_bits().hash(&mut h);
+                }
+                data.hash(&mut h);
+            }
+            FragKind::Space => 2u8.hash(&mut h),
+        }
+    }
+    h.finish()
 }
 
 pub struct ParaInput<'a> {
@@ -563,6 +603,7 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
             height,
             baseline: ascent,
             descent,
+            look: look_of(height, ascent, descent, &frags),
             frags,
             from: line_from,
             to,

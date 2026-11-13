@@ -72,3 +72,19 @@ fn render_writes_a_png_and_reports_bad_arguments() {
     assert!(sfdoc_cli::run(&[]).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+#[test]
+fn bench_lays_out_a_synthetic_report_and_enforces_its_budget() {
+    let fonts = root().join("assets/fonts");
+    let run = |args: &[&str]| {
+        let mut a: Vec<String> = args.iter().map(|s| (*s).to_owned()).collect();
+        a.extend(["--fonts".to_owned(), fonts.display().to_string()]);
+        sfdoc_cli::run(&a)
+    };
+    let out = run(&["bench", "4"]).unwrap();
+    assert!(out.contains("pages, ") && out.contains("full layout: ") && out.contains("worst "), "{out}");
+    // An impossible budget fails and still says what was measured.
+    let err = run(&["bench", "4", "0"]).unwrap_err();
+    assert!(err.contains("over budget") && err.contains("full layout: "), "{err}");
+    assert!(run(&["bench", "many"]).unwrap_err().contains("pages must be a number"));
+}

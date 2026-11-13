@@ -42,6 +42,15 @@ pub struct Layout {
 #[derive(Default)]
 pub struct Layouter {
     cache: Vec<Option<Arc<BlockFlow>>>,
+    /// What is known about a block without laying it out; kept as long as the block is.
+    meta: Vec<Option<BlockMeta>>,
+}
+
+#[derive(Clone)]
+struct BlockMeta {
+    size: u32,
+    /// The block's headings, positions from the block's start.
+    headings: Vec<flow::Heading>,
 }
 
 impl Layouter {
@@ -52,14 +61,16 @@ impl Layouter {
     /// Forget everything (fonts or page setup changed).
     pub fn clear(&mut self) {
         self.cache.clear();
+        self.meta.clear();
     }
 
     /// Mirror of `Document::replace_blocks`: blocks `from..to` were replaced by `count` new ones.
     pub fn replaced(&mut self, from: usize, to: usize, count: usize) {
-        if from <= to && to <= self.cache.len() {
+        if from <= to && to <= self.cache.len() && to <= self.meta.len() {
             self.cache.splice(from..to, std::iter::repeat_n(None, count));
+            self.meta.splice(from..to, std::iter::repeat_n(None, count));
         } else {
-            self.cache.clear();
+            self.clear();
         }
     }
 
@@ -72,13 +83,26 @@ impl Layouter {
         let width = (doc.page.width - doc.page.margin_left - doc.page.margin_right).max(1.0);
         // A table of contents is made from every heading of the document, so the block that holds one is laid out
         // again whenever a heading's text or level changes (their positions and pages are filled in at the end).
+        // Sizes and headings of unchanged blocks are remembered: counting them walks all the text.
+        self.meta.resize(doc.blocks.len(), None);
         let mut headings = Vec::new();
-        flow::collect_headings(&doc.blocks, 0, &mut headings);
+        let mut sizes = Vec::with_capacity(doc.blocks.len());
+        let mut at = 0u32;
+        for (block, slot) in doc.blocks.iter().zip(self.meta.iter_mut()) {
+            let meta = slot.get_or_insert_with(|| {
+                let mut own = Vec::new();
+                flow::collect_headings(std::slice::from_ref(block), 0, &mut own);
+                BlockMeta { size: block.size(), headings: own }
+            });
+            headings.extend(meta.headings.iter().map(|h| flow::Heading { pos: h.pos + at, ..h.clone() }));
+            sizes.push(meta.size);
+            at += meta.size;
+        }
         let toc_key = flow::headings_key(&headings);
         self.cache.resize(doc.blocks.len(), None);
         let mut flows = Vec::with_capacity(doc.blocks.len());
         let (mut pos, mut footnotes) = (0u32, 0u32);
-        for (block, slot) in doc.blocks.iter().zip(self.cache.iter_mut()) {
+        for ((block, slot), size) in doc.blocks.iter().zip(self.cache.iter_mut()).zip(sizes) {
             // A cached result holds while the width is the same and, if the block numbers footnotes, while the
             // number of footnotes before it is the same.
             let valid = slot.as_ref().is_some_and(|f| {
@@ -94,7 +118,7 @@ impl Layouter {
                 footnotes += f.footnotes;
                 flows.push((pos, Arc::clone(f)));
             }
-            pos += block.size();
+            pos += size;
         }
         let mut pages = flow::paginate(&doc.page, &flows);
         flow::finish(&mut pages, &doc.page, &headings, &sh).ok_or(LayoutError::NoFonts)?;
@@ -252,38 +276,11 @@ impl Layout {
 
 /// Everything about a placed line that reaches the screen.
 fn hash_line(l: &PlacedLine, h: &mut impl Hasher) {
-    let line = &l.line;
-    for v in [l.x, l.y, l.box_w, line.height, line.baseline, line.descent] {
+    for v in [l.x, l.y, l.box_w] {
         v.to_bits().hash(h);
     }
     l.background.hash(h);
-    line.frags.len().hash(h);
-    for f in &line.frags {
-        f.x.to_bits().hash(h);
-        f.advance.to_bits().hash(h);
-        match &f.kind {
-            FragKind::Text(t) => {
-                0u8.hash(h);
-                t.text.hash(h);
-                t.font.0.hash(h);
-                t.size.to_bits().hash(h);
-                t.rise.to_bits().hash(h);
-                t.color.hash(h);
-                t.background.hash(h);
-                (t.underline, t.strike).hash(h);
-                t.link.hash(h);
-            }
-            FragKind::Atom { kind, width, height, depth, data } => {
-                1u8.hash(h);
-                (*kind as u8).hash(h);
-                for v in [width, height, depth] {
-                    v.to_bits().hash(h);
-                }
-                data.hash(h);
-            }
-            FragKind::Space => 2u8.hash(h),
-        }
-    }
+    l.line.look.hash(h);
 }
 
 #[cfg(test)]

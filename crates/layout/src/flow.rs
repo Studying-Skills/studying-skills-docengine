@@ -1646,17 +1646,30 @@ pub fn add_running(pages: &mut [PageLayout], page: &PageSetup, running: &Running
         };
         layout_paragraph(&ParaInput { para: &para, style: &style, width, marker: None, footnote_base: 0 }, sh)
     };
+    // The header and footer text is the same on every page: laid out once, shared by all.
+    let shared = |text: &str| -> Option<Vec<Arc<Line>>> {
+        Some(if text.is_empty() {
+            Vec::new()
+        } else {
+            line(text, 12.0, Align::Left)?.into_iter().map(Arc::new).collect()
+        })
+    };
+    let header = shared(&running.header)?;
+    let footer_text = shared(&running.footer)?;
     for (i, p) in pages.iter_mut().enumerate() {
         if i == 0 && running.title_page {
             continue;
         }
         let number = (i + 1).to_string();
-        let place = |lines: Vec<Line>, y: f32, p: &mut PageLayout| -> f32 {
+        let numbered = |align: Align| -> Option<Vec<Arc<Line>>> {
+            Some(line(&number, 14.0, align)?.into_iter().map(Arc::new).collect())
+        };
+        let place = |lines: Vec<Arc<Line>>, y: f32, p: &mut PageLayout| -> f32 {
             let mut y = y;
             for l in lines {
                 let h = l.height;
                 p.running.push(PlacedLine {
-                    line: Arc::new(l),
+                    line: l,
                     x: page.margin_left,
                     y,
                     box_w: width,
@@ -1668,19 +1681,14 @@ pub fn add_running(pages: &mut [PageLayout], page: &PageSetup, running: &Running
             }
             y
         };
-        if !running.header.is_empty() {
-            place(line(&running.header, 12.0, Align::Left)?, RUNNING_EDGE, p);
-        }
+        place(header.clone(), RUNNING_EDGE, p);
         if running.page_number == PageNumber::TopRight {
-            place(line(&number, 14.0, Align::Right)?, RUNNING_EDGE, p);
+            place(numbered(Align::Right)?, RUNNING_EDGE, p);
         }
         // The footer grows upwards from its bottom edge: text first, the number under it.
-        let mut footer: Vec<Line> = Vec::new();
-        if !running.footer.is_empty() {
-            footer.extend(line(&running.footer, 12.0, Align::Left)?);
-        }
+        let mut footer = footer_text.clone();
         if running.page_number == PageNumber::BottomCenter {
-            footer.extend(line(&number, 14.0, Align::Center)?);
+            footer.extend(numbered(Align::Center)?);
         }
         let h: f32 = footer.iter().map(|l| l.height).sum();
         place(footer, page.height - RUNNING_EDGE - h, p);

@@ -1,5 +1,7 @@
 //! The `sfdoc` commands as functions, so tests call them without spawning a process.
 
+mod bench;
+
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
@@ -17,8 +19,11 @@ sfdoc — StudyFlow document engine
       lay the document out and print where every line and box landed; with --page, that page's display list as JSON
   sfdoc pdf <doc.json> -o <out.pdf> [--assets DIR] [--math FILE] [--title T] [--fonts DIR]
       write the document as PDF. Pictures are files under --assets (the document's own folder by default);
-      --math is a JSON object from formula source to SVG (see tools/math-svg). What is missing becomes an
-      empty frame and is listed on stderr.
+      --math is a JSON object from formula source to SVG. What is missing becomes an empty frame and is
+      listed on stderr. (A report.html goes to PDF with the frontend's report-pdf tool, which runs this engine.)
+  sfdoc bench [PAGES] [BUDGET_MS] [--fonts DIR]
+      time the layout of a synthetic report (50 pages by default): the full layout and one keystroke; with a
+      budget, fail when the median keystroke is slower
 
 Fonts are read from --fonts, else $SFDOC_FONTS, else ./assets/fonts (every .ttf and .otf below it).";
 
@@ -296,6 +301,17 @@ pub fn run(args: &[String]) -> Result<String, String> {
     let doc_path =
         || a.positional.first().map(PathBuf::from).ok_or_else(|| format!("{cmd}: which document?\n\n{USAGE}"));
     match cmd.as_str() {
+        "bench" => {
+            let pages = a
+                .positional
+                .first()
+                .map_or(Ok(50), |p| p.parse::<usize>().map_err(|_| "bench: pages must be a number".to_owned()))?;
+            let budget = match a.positional.get(1) {
+                Some(b) => Some(b.parse::<f64>().map_err(|_| "bench: the budget is milliseconds".to_owned())?),
+                None => None,
+            };
+            bench::run(pages.clamp(1, 2000), budget, &load_fonts(&fonts_dir(&a))?)
+        }
         "inspect" => Ok(inspect(&read_doc(&doc_path()?)?)),
         "layout" => {
             let doc = read_doc(&doc_path()?)?;
