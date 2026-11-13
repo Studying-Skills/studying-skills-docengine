@@ -1,0 +1,13 @@
+[package]
+name = "s3-math"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+krilla = { version = "0.8.2", default-features = false, features = ["simple-text"] }
+krilla-svg = "0.8.1"
+usvg = "0.47"
+serde_json = "1"
+
+[workspace]

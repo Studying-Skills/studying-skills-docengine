@@ -1,0 +1,17 @@
+<!doctype html><meta charset="utf-8"><title>S2 hidden input</title>
+<style>
+  body { margin: 0; font: 16px/1.5 serif; background: #ddd; }
+  #stage { position: relative; width: 900px; margin: 0 auto; }
+  /* The visible "pages": not editable, no native selection. Laid out differently from the hidden editor on purpose. */
+  #pages { position: relative; width: 480px; margin: 20px auto; padding: 40px; background: #fff; user-select: none; -webkit-user-select: none; cursor: text; min-height: 400px; }
+  #pages p { margin: 0 0 14px; white-space: pre-wrap; word-break: break-word; }
+  #caret { position: absolute; width: 1.5px; background: #000; pointer-events: none; }
+  .sel { position: absolute; background: rgba(60,120,255,.3); pointer-events: none; }
+  .composing { text-decoration: underline; }
+  /* The hidden editor: real contenteditable, transparent, never hit by the mouse, moved under the painted caret. */
+  #hidden { position: absolute; left: 0; top: 0; width: 800px; opacity: 0; pointer-events: none; z-index: -1; }
+  #hidden .ProseMirror { outline: none; white-space: pre-wrap; }
+  #hidden p { margin: 0 0 30px; }
+</style>
+<div id="stage"><div id="pages" aria-hidden="true"></div><div id="overlay"></div><div id="hidden"></div></div>
+<script src="./bundle.js"></script>
