@@ -96,6 +96,11 @@ const TOC_GAP: f32 = 4.0;
 /// Cell padding left and right (Word's default 0.19 cm) and above and below the content.
 pub const CELL_PAD_X: f32 = 5.4;
 pub const CELL_PAD_Y: f32 = 2.0;
+/// From the top of a row to its content: the grid line takes its own thickness, then the padding. Without the
+/// line's share every row came out half a point lower than in Word, LibreOffice and a browser.
+pub const CELL_TOP: f32 = TABLE_BORDER + CELL_PAD_Y;
+/// What a row is taller than its content by.
+pub const CELL_EXTRA: f32 = CELL_TOP + CELL_PAD_Y;
 /// Thickness of the table grid.
 pub const TABLE_BORDER: f32 = 0.5;
 const MIN_COLUMN: f32 = 24.0;
@@ -625,7 +630,7 @@ impl Flattener<'_, '_> {
             );
             let items = std::mem::replace(&mut self.out, outer);
             done?;
-            let height = stack_height(&items) + 2.0 * CELL_PAD_Y;
+            let height = stack_height(&items) + CELL_EXTRA;
             if let Some(row) = rows.get_mut(s.row) {
                 row.cells.push(CellFlow {
                     col: s.col,
@@ -665,7 +670,7 @@ impl Flattener<'_, '_> {
         for row in &mut rows {
             // A row no cell starts in (everything in it is spanned from above) still takes a line.
             if row.height <= 0.0 {
-                row.height = base + 2.0 * CELL_PAD_Y;
+                row.height = base + CELL_EXTRA;
             }
         }
 
@@ -1121,7 +1126,7 @@ fn place_rows(
                 &mut Cursor::default(),
                 start,
                 left,
-                top + CELL_PAD_Y,
+                top + CELL_TOP,
                 f32::INFINITY,
                 true,
                 region,
@@ -1337,9 +1342,9 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                         let mut first = true;
                         loop {
                             let y = pg.y + if first { gap } else { 0.0 };
-                            let room = pg.bottom() - y - 2.0 * CELL_PAD_Y;
+                            let room = pg.bottom() - y - CELL_EXTRA;
                             // Too little room to start the row here: start on the next page.
-                            if first && room < 2.0 * CELL_PAD_Y + 20.0 && pg.y > pg.top() + 0.01 {
+                            if first && room < CELL_EXTRA + 20.0 && pg.y > pg.top() + 0.01 {
                                 continue_on_new_page(&mut pg, r, 40.0);
                                 first = false;
                                 continue;
@@ -1358,7 +1363,7 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                                         cur,
                                         *start,
                                         left,
-                                        y + CELL_PAD_Y,
+                                        y + CELL_TOP,
                                         room,
                                         fresh,
                                         region,
@@ -1370,7 +1375,7 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                                     regions.push(region);
                                 }
                                 // A segment that continues reaches the bottom of the page.
-                                seg += 2.0 * CELL_PAD_Y;
+                                seg += CELL_EXTRA;
                                 if unfinished {
                                     seg = seg.max(bottom - y);
                                 }

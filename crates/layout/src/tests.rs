@@ -851,13 +851,11 @@ fn table_cells_stand_side_by_side_in_a_grid() {
     let in_cell = |r: u16| lines(&l).into_iter().filter(|(_, pl)| pl.region == r).collect::<Vec<_>>();
     assert_eq!(in_cell(3).len(), 1);
     assert!(in_cell(4).len() >= 3);
-    assert!(
-        (c.h - (in_cell(4).iter().map(|(_, pl)| pl.line.height).sum::<f32>() + 2.0 * flow::CELL_PAD_Y)).abs() < 0.01
-    );
+    assert!((c.h - (in_cell(4).iter().map(|(_, pl)| pl.line.height).sum::<f32>() + flow::CELL_EXTRA)).abs() < 0.01);
     // Text starts after the cell padding; header cells are bold, body cells are not, single-spaced and unindented.
     let first = in_cell(1)[0].1;
     assert!((first.x - (LEFT + flow::CELL_PAD_X)).abs() < 0.01 && first.line.x.abs() < 0.01);
-    assert!((first.y - (a.y + flow::CELL_PAD_Y)).abs() < 0.01);
+    assert!((first.y - (a.y + flow::CELL_TOP)).abs() < 0.01);
     let font = |pl: &PlacedLine| {
         pl.line.frags.iter().find_map(|f| if let FragKind::Text(t) = &f.kind { Some(t.font) } else { None }).unwrap()
     };
@@ -1015,7 +1013,7 @@ fn a_long_table_moves_rows_whole_and_repeats_its_header() {
         } else {
             // The header again, drawn at the top, above the first real row.
             assert_eq!(ghosts[..2], ["№", "Значення"]);
-            assert!((page.running[0].y - (mm(20.0) + flow::CELL_PAD_Y)).abs() < 0.01);
+            assert!((page.running[0].y - (mm(20.0) + flow::CELL_TOP)).abs() < 0.01);
             assert!(page.entries[0].top() > page.running[0].y + 10.0);
         }
     }
