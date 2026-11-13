@@ -49,6 +49,10 @@ pub struct GlyphRun {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlacedGlyph {
     pub id: u16,
+    /// Byte offset in the run's text of the first character the glyph stands for. The browser draws text itself
+    /// and does not need it, so it stays out of the JSON.
+    #[serde(default, skip_serializing)]
+    pub cluster: u32,
     pub x: f32,
     pub y: f32,
 }

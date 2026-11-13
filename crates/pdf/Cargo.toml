@@ -1,0 +1,29 @@
+[package]
+name = "sfdoc-pdf"
+description = "PDF from the display list: the same pages the screen shows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+sfdoc-geom = { workspace = true }
+sfdoc-model = { workspace = true }
+sfdoc-fonts = { workspace = true }
+sfdoc-layout = { workspace = true }
+thiserror = { workspace = true }
+krilla = { version = "0.8.2", default-features = false, features = ["raster-images"] }
+krilla-svg = { version = "0.8.1", optional = true }
+usvg = { version = "0.47", optional = true }
+
+[features]
+# Any SVG picture through a full SVG renderer. Heavy (several MB): on in the command-line tool, off in the browser
+# build, where formulas go through the built-in outline reader and SVG pictures are rasterised by the browser.
+svg = ["dep:krilla-svg", "dep:usvg"]
+
+[dev-dependencies]
+serde_json = { workspace = true }

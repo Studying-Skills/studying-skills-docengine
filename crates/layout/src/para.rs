@@ -153,7 +153,7 @@ fn carets(text: &str, glyphs: &[Glyph], k: f32) -> (Vec<f32>, Vec<PlacedGlyph>, 
         if clusters.last().is_none_or(|c| c.0 != g.cluster as usize) {
             clusters.push((g.cluster as usize, pen));
         }
-        placed.push(PlacedGlyph { id: g.id, x: pen + g.x_offset * k, y: -g.y_offset * k });
+        placed.push(PlacedGlyph { id: g.id, cluster: g.cluster, x: pen + g.x_offset * k, y: -g.y_offset * k });
         pen += g.x_advance * k;
     }
     clusters.sort_by_key(|c| c.0);

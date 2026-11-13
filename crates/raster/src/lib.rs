@@ -146,7 +146,7 @@ mod tests {
             .shape(text)
             .iter()
             .map(|g| {
-                let p = PlacedGlyph { id: g.id, x: x + g.x_offset * k, y: -g.y_offset * k };
+                let p = PlacedGlyph { id: g.id, cluster: g.cluster, x: x + g.x_offset * k, y: -g.y_offset * k };
                 x += g.x_advance * k;
                 p
             })

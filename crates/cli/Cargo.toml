@@ -19,6 +19,7 @@ sfdoc-model = { workspace = true }
 sfdoc-fonts = { workspace = true }
 sfdoc-layout = { workspace = true }
 sfdoc-raster = { workspace = true }
+sfdoc-pdf = { workspace = true, features = ["svg"] }
 serde_json = { workspace = true }
 
 [dev-dependencies]

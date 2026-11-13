@@ -9,14 +9,14 @@ fn js<T>(r: Result<T, String>) -> Result<T, JsError> {
 }
 
 #[wasm_bindgen]
-pub struct Engine(engine::Engine);
+pub struct Engine(engine::Engine, Vec<String>);
 
 #[wasm_bindgen]
 impl Engine {
     #[wasm_bindgen(constructor)]
     #[allow(clippy::new_without_default)]
     pub fn new() -> Engine {
-        Engine(engine::Engine::new())
+        Engine(engine::Engine::new(), Vec::new())
     }
 
     /// Register a font file; returns `family|bold|italic` as the file states them.
@@ -103,6 +103,36 @@ impl Engine {
     #[wasm_bindgen(js_name = lineBounds)]
     pub fn line_bounds(&mut self, pos: u32) -> Result<Vec<u32>, JsError> {
         js(self.0.line_bounds(pos))
+    }
+
+    /// A picture file for the PDF: used for objects whose `data` equals `key`.
+    #[wasm_bindgen(js_name = addPicture)]
+    pub fn add_picture(&mut self, key: &str, bytes: Vec<u8>) {
+        self.0.add_picture(key, bytes);
+    }
+
+    /// An SVG for the PDF (a formula as outlines, or an SVG picture).
+    #[wasm_bindgen(js_name = addSvg)]
+    pub fn add_svg(&mut self, key: &str, svg: &str) {
+        self.0.add_svg(key, svg);
+    }
+
+    #[wasm_bindgen(js_name = clearPictures)]
+    pub fn clear_pictures(&mut self) {
+        self.0.clear_pictures();
+    }
+
+    /// The document as PDF bytes. Objects without a usable picture become empty frames; `pdfMissing` lists them.
+    pub fn pdf(&mut self, title: &str) -> Result<Vec<u8>, JsError> {
+        let (bytes, missing) = js(self.0.pdf(title))?;
+        self.1 = missing;
+        Ok(bytes)
+    }
+
+    /// `data` of the objects the last `pdf` call could not draw.
+    #[wasm_bindgen(js_name = pdfMissing)]
+    pub fn pdf_missing(&self) -> Vec<String> {
+        self.1.clone()
     }
 
     /// Page (from 0) of a position; -1 for an empty document.

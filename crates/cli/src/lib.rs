@@ -15,6 +15,10 @@ sfdoc — StudyFlow document engine
       lay the document out and write one page as PNG (page 1, scale 2 = 144 dpi by default)
   sfdoc layout <doc.json> [--fonts DIR] [--page N]
       lay the document out and print where every line and box landed; with --page, that page's display list as JSON
+  sfdoc pdf <doc.json> -o <out.pdf> [--assets DIR] [--math FILE] [--title T] [--fonts DIR]
+      write the document as PDF. Pictures are files under --assets (the document's own folder by default);
+      --math is a JSON object from formula source to SVG (see tools/math-svg). What is missing becomes an
+      empty frame and is listed on stderr.
 
 Fonts are read from --fonts, else $SFDOC_FONTS, else ./assets/fonts (every .ttf and .otf below it).";
 
@@ -181,6 +185,46 @@ pub fn describe(layout: &sfdoc_layout::Layout) -> String {
     out
 }
 
+/// Pictures from a folder, formulas from a prepared map.
+pub struct FileAssets {
+    pub dir: PathBuf,
+    pub math: std::collections::HashMap<String, String>,
+}
+
+impl sfdoc_pdf::Assets for FileAssets {
+    fn picture(&self, kind: sfdoc_layout::ObjectKind, data: &str) -> Option<sfdoc_pdf::Picture> {
+        use sfdoc_layout::ObjectKind;
+        match kind {
+            ObjectKind::Math | ObjectKind::MathBlock => self.math.get(data).cloned().map(sfdoc_pdf::Picture::Svg),
+            _ => {
+                // Only files below the assets folder: a document must not make the tool read anything else.
+                let rel = Path::new(data);
+                if rel.is_absolute() || rel.components().any(|c| !matches!(c, std::path::Component::Normal(_))) {
+                    return None;
+                }
+                let bytes = std::fs::read(self.dir.join(rel)).ok()?;
+                if rel.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("svg")) {
+                    return String::from_utf8(bytes).ok().map(sfdoc_pdf::Picture::Svg);
+                }
+                Some(sfdoc_pdf::Picture::Raster(bytes))
+            }
+        }
+    }
+}
+
+/// The `pdf` command without the file writing: returns the bytes and what was missing.
+pub fn pdf(
+    doc: &Document,
+    fonts: &FontSet,
+    assets: &FileAssets,
+    title: Option<String>,
+) -> Result<(Vec<u8>, Vec<String>), String> {
+    let layout = sfdoc_layout::layout(doc, fonts).map_err(|e| e.to_string())?;
+    let info = sfdoc_pdf::Info { title, language: Some("uk".into()), ..Default::default() };
+    let (bytes, report) = sfdoc_pdf::write_pdf(&layout, fonts, assets, &info).map_err(|e| e.to_string())?;
+    Ok((bytes, report.missing))
+}
+
 fn sfdoc_geom_mm(pt: f32) -> f32 {
     pt * 25.4 / 72.0
 }
@@ -192,16 +236,32 @@ struct Args {
     page: usize,
     scale: f32,
     fonts: Option<PathBuf>,
+    assets: Option<PathBuf>,
+    math: Option<PathBuf>,
+    title: Option<String>,
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
-    let mut a = Args { page_given: false, positional: Vec::new(), out: None, page: 1, scale: 2.0, fonts: None };
+    let mut a = Args {
+        page_given: false,
+        positional: Vec::new(),
+        out: None,
+        page: 1,
+        scale: 2.0,
+        fonts: None,
+        assets: None,
+        math: None,
+        title: None,
+    };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| it.next().cloned().ok_or_else(|| format!("{name} needs a value"));
         match arg.as_str() {
             "-o" | "--out" => a.out = Some(value("-o")?.into()),
             "--fonts" => a.fonts = Some(value("--fonts")?.into()),
+            "--assets" => a.assets = Some(value("--assets")?.into()),
+            "--math" => a.math = Some(value("--math")?.into()),
+            "--title" => a.title = Some(value("--title")?),
             "--page" => {
                 a.page = value("--page")?.parse().ok().filter(|n| *n >= 1).ok_or("--page takes a number from 1")?;
                 a.page_given = true;
@@ -260,6 +320,27 @@ pub fn run(args: &[String]) -> Result<String, String> {
             let png = sfdoc_raster::render_png(&page, &fonts, a.scale).map_err(|e| e.to_string())?;
             std::fs::write(&out, &png).map_err(|e| format!("{}: {e}", out.display()))?;
             Ok(format!("page {} of {} → {} ({} bytes)\n", a.page, layout.pages.len(), out.display(), png.len()))
+        }
+        "pdf" => {
+            let path = doc_path()?;
+            let doc = read_doc(&path)?;
+            let fonts = load_fonts(&fonts_dir(&a))?;
+            let out = a.out.clone().ok_or("pdf needs -o <out.pdf>")?;
+            let dir = a.assets.clone().or_else(|| path.parent().map(Path::to_path_buf)).unwrap_or_default();
+            let math = match &a.math {
+                Some(p) => {
+                    let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+                    serde_json::from_str(&text).map_err(|e| format!("{}: {e}", p.display()))?
+                }
+                None => Default::default(),
+            };
+            let (bytes, missing) = pdf(&doc, &fonts, &FileAssets { dir, math }, a.title.clone())?;
+            std::fs::write(&out, &bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+            let mut msg = format!("{}: {} bytes", out.display(), bytes.len());
+            for m in &missing {
+                let _ = write!(msg, "\nmissing: {m}");
+            }
+            Ok(msg)
         }
         "help" | "--help" | "-h" => Ok(format!("{USAGE}\n")),
         other => Err(format!("unknown command {other}\n\n{USAGE}")),

@@ -15,6 +15,7 @@ sfdoc-model = { path = "crates/model" }
 sfdoc-fonts = { path = "crates/fonts" }
 sfdoc-layout = { path = "crates/layout" }
 sfdoc-raster = { path = "crates/raster" }
+sfdoc-pdf = { path = "crates/pdf" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

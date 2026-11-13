@@ -11,6 +11,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("sfdoc-fonts", 1),
     ("sfdoc-layout", 2),
     ("sfdoc-raster", 3),
+    ("sfdoc-pdf", 3),
     ("sfdoc-wasm", 4),
     ("sfdoc-cli", 4),
 ];

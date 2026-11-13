@@ -12,6 +12,8 @@ pub struct Engine {
     layouter: Layouter,
     /// The layout of `doc`; dropped by every change and rebuilt on demand.
     layout: Option<Layout>,
+    /// Pictures and formula drawings for the PDF, by the `data` of their objects.
+    pictures: std::collections::HashMap<String, sfdoc_pdf::Picture>,
 }
 
 impl Engine {
@@ -136,6 +138,34 @@ impl Engine {
         Ok(self.ensure_layout()?.line_bounds(pos).map_or_else(|| vec![pos, pos], |(a, b)| vec![a, b]))
     }
 
+    /// Give the PDF writer a picture file for objects whose `data` is `key`.
+    pub fn add_picture(&mut self, key: &str, bytes: Vec<u8>) {
+        self.pictures.insert(key.to_owned(), sfdoc_pdf::Picture::Raster(bytes));
+    }
+
+    /// Give the PDF writer an SVG (a formula drawn as outlines, or an SVG picture) for objects whose `data` is `key`.
+    pub fn add_svg(&mut self, key: &str, svg: &str) {
+        self.pictures.insert(key.to_owned(), sfdoc_pdf::Picture::Svg(svg.to_owned()));
+    }
+
+    pub fn clear_pictures(&mut self) {
+        self.pictures.clear();
+    }
+
+    /// The document as PDF, and the `data` of every object that had no usable picture.
+    pub fn pdf(&mut self, title: &str) -> Result<(Vec<u8>, Vec<String>), String> {
+        self.ensure_layout()?;
+        let Some(layout) = self.layout.as_ref() else { return Err("layout is missing".into()) };
+        let info = sfdoc_pdf::Info {
+            title: (!title.is_empty()).then(|| title.to_owned()),
+            language: Some("uk".into()),
+            ..Default::default()
+        };
+        let (bytes, report) =
+            sfdoc_pdf::write_pdf(layout, &self.fonts, &self.pictures, &info).map_err(|e| e.to_string())?;
+        Ok((bytes, report.missing))
+    }
+
     /// Page (from 0) a position is on; -1 when the document is empty.
     pub fn page_of(&mut self, pos: u32) -> Result<i32, String> {
         Ok(self.ensure_layout()?.page_of(pos).map_or(-1, |p| p as i32))
@@ -220,6 +250,23 @@ mod tests {
         // The refused settings changed nothing, and an edit keeps the settings.
         e.replace_blocks(0, 1, "[]").unwrap();
         assert!(e.page(0).unwrap().contains(r#""text":"Шапка""#));
+    }
+
+    #[test]
+    fn pdf_lists_what_it_could_not_draw() {
+        let mut e = Engine::new();
+        e.add_font(font()).unwrap();
+        e.set_document(
+            r#"{"version":1,"blocks":[{"type":"leaf","kind":"image","width":50,"height":20,"data":"a.svg"}]}"#,
+        )
+        .unwrap();
+        let (bytes, missing) = e.pdf("Звіт").unwrap();
+        assert!(bytes.starts_with(b"%PDF-"));
+        assert_eq!(missing, vec!["a.svg"]);
+        e.add_svg("a.svg", r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 5 2"><path d="M0 0h5v2z"/></svg>"#);
+        assert!(e.pdf("").unwrap().1.is_empty());
+        e.clear_pictures();
+        assert_eq!(e.pdf("").unwrap().1.len(), 1);
     }
 
     #[test]

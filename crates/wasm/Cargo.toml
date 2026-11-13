@@ -21,6 +21,7 @@ panic = "deny"
 sfdoc-model = { workspace = true }
 sfdoc-fonts = { workspace = true }
 sfdoc-layout = { workspace = true }
+sfdoc-pdf = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 wasm-bindgen = { workspace = true }
