@@ -176,6 +176,12 @@ impl Layout {
             if end < from || start >= to {
                 continue;
             }
+            // A position shared by a wrapped line's end and the next line's start belongs to the next line: a
+            // selection starting there leaves the upper line alone. After a paragraph's last line the same
+            // position is the paragraph break, and that is selected (the sliver below).
+            if end == from && matches!(e, Entry::Line(l) if !l.line.hard) {
+                continue;
+            }
             match e {
                 Entry::Line(l) => {
                     let a = from.max(start) - l.base;

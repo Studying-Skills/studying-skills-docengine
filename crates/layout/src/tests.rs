@@ -576,6 +576,17 @@ fn selection_rectangles_follow_the_lines() {
     assert!((one[0].rect.right() - l.caret_rect(10).unwrap().x).abs() < 0.01);
     // Backwards is the same selection.
     assert_eq!(l.selection_rects(10, 5), one);
+    // From the start of the second line: nothing is drawn at the end of the first.
+    let second = lines(&l)[1].1;
+    let from = second.base + second.line.from;
+    let part = l.selection_rects(from, from + 5);
+    assert_eq!(part.len(), 1);
+    assert!((part[0].rect.y - second.y).abs() < 0.01);
+    // From the end of a paragraph into the next: the paragraph break itself is selected.
+    let para_end = 1 + utf16_len(LOREM);
+    let over = l.selection_rects(para_end, para_end + 4);
+    assert_eq!(over.len(), 2);
+    assert!(over[0].rect.w > 0.0 && over[0].rect.w < 6.0);
     let all = l.selection_rects(0, d.content_size());
     assert_eq!(all.len(), lines(&l).len());
     // Rectangles of consecutive lines touch: no stripes between them.
