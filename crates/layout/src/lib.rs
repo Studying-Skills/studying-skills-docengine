@@ -74,6 +74,26 @@ impl Layouter {
         }
     }
 
+    /// Column widths (points) of every table of the last layout, in document order; a table inside a cell comes
+    /// after the table that holds it. Exporters use them so that a table looks elsewhere as it does here.
+    pub fn table_columns(&self) -> Vec<Vec<f32>> {
+        fn walk(items: &[flow::FlowItem], out: &mut Vec<Vec<f32>>) {
+            for item in items {
+                if let flow::FlowItem::Table(t) = item {
+                    out.push(t.cols.iter().zip(t.cols.iter().skip(1)).map(|(a, b)| b - a).collect());
+                    for cell in t.rows.iter().flat_map(|r| &r.cells) {
+                        walk(&cell.items, out);
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        for block in self.cache.iter().flatten() {
+            walk(&block.items, &mut out);
+        }
+        out
+    }
+
     pub fn layout(&mut self, doc: &Document, fonts: &FontSet) -> Result<Layout, LayoutError> {
         doc.validate()?;
         if fonts.is_empty() {

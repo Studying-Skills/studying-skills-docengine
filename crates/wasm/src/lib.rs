@@ -153,6 +153,12 @@ impl Engine {
         self.1.clone()
     }
 
+    /// Column widths of every table in document order: `[columns, width, width, ..., columns, width, ...]`, points.
+    #[wasm_bindgen(js_name = tableColumns)]
+    pub fn table_columns(&mut self) -> Result<Vec<f32>, JsError> {
+        js(self.0.table_columns())
+    }
+
     /// Page (from 0) of a position; -1 for an empty document.
     #[wasm_bindgen(js_name = pageOf)]
     pub fn page_of(&mut self, pos: u32) -> Result<i32, JsError> {

@@ -250,6 +250,13 @@ impl Engine {
         Ok((bytes, report.missing))
     }
 
+    /// Column widths of every table in document order, flattened: the number of columns, then that many widths
+    /// in points, for each table.
+    pub fn table_columns(&mut self) -> Result<Vec<f32>, String> {
+        self.ensure_layout()?;
+        Ok(self.layouter.table_columns().into_iter().flat_map(|c| std::iter::once(c.len() as f32).chain(c)).collect())
+    }
+
     /// Page (from 0) a position is on; -1 when the document is empty.
     pub fn page_of(&mut self, pos: u32) -> Result<i32, String> {
         Ok(self.ensure_layout()?.page_of(pos).map_or(-1, |p| p as i32))

@@ -903,6 +903,26 @@ fn columns_without_widths_follow_their_content_and_fill_the_text_area() {
 }
 
 #[test]
+fn column_widths_are_reported_in_document_order() {
+    let inner = table(vec![], vec![vec![cell("a"), cell("b"), cell("c")]]);
+    let d = doc(vec![
+        table(vec![100.0, 200.0], vec![vec![cell("1"), cell("2")]]),
+        para("Між таблицями."),
+        table(vec![], vec![vec![cell("№"), cell_of(vec![para("Вкладена:"), inner])]]),
+    ]);
+    let mut layouter = Layouter::new();
+    let l = layouter.layout(&d, &fonts()).unwrap();
+    let cols = layouter.table_columns();
+    assert_eq!(cols.iter().map(Vec::len).collect::<Vec<_>>(), vec![2, 2, 3]);
+    assert!((cols[0][0] - 100.0).abs() < 0.01 && (cols[0][1] - 200.0).abs() < 0.01, "{:?}", cols[0]);
+    // The widths are those of the drawn cells: the second table fills the text area.
+    assert!((cols[1].iter().sum::<f32>() - TEXT_W).abs() < 0.05);
+    assert!((cols[1][0] - l.pages[0].cells[2].w).abs() < 0.01, "{:?} {:?}", cols[1], l.pages[0].cells);
+    // The nested table fits inside its cell.
+    assert!(cols[2].iter().sum::<f32>() < cols[1][1]);
+}
+
+#[test]
 fn merged_cells_span_columns_and_rows() {
     let tall = Cell { rowspan: 2, ..cell("на два рядки") };
     let wide = Cell { colspan: 2, ..cell("на два стовпці") };
