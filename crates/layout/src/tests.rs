@@ -660,6 +660,15 @@ fn an_edit_re_lays_only_its_block_and_repaints_only_changed_pages() {
     assert!(Arc::ptr_eq(&a[0].1.line, &b[0].1.line) && Arc::ptr_eq(&a[98].1.line, &b[98].1.line));
     assert!(!Arc::ptr_eq(&a[99].1.line, &b[99].1.line));
 
+    // Undo: the page looks as before, so it has its old fingerprint (whatever memory the new lines landed in).
+    d.replace_blocks(99, 100, vec![para("Рядок 99")]).unwrap();
+    lt.replaced(99, 100, 1);
+    let undone = lt.layout(&d, &f).unwrap();
+    assert_eq!(undone.fingerprint(3), before.fingerprint(3));
+    d.replace_blocks(99, 100, vec![para("Рядок 99 і ще трохи тексту")]).unwrap();
+    lt.replaced(99, 100, 1);
+    assert_eq!(lt.layout(&d, &f).unwrap().fingerprint(3), after.fingerprint(3));
+
     // A new first paragraph pushes everything down: every page changes, yet only one block is laid out.
     d.replace_blocks(0, 0, vec![para("Новий перший")]).unwrap();
     lt.replaced(0, 0, 1);

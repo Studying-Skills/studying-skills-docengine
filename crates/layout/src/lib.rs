@@ -205,18 +205,15 @@ impl Layout {
 
     /// A number that changes when the page has to be repainted. Positions are left out on purpose: typing a letter
     /// shifts the positions of everything after it without changing how the later pages look.
+    ///
+    /// It hashes what is drawn, not which allocation holds it: an undo frees a line and the next layout may put
+    /// a different line at the same address.
     pub fn fingerprint(&self, index: usize) -> Option<u64> {
         let p = self.pages.get(index)?;
         let mut h = std::collections::hash_map::DefaultHasher::new();
-        let line = |l: &PlacedLine, h: &mut std::collections::hash_map::DefaultHasher| {
-            // Lines are immutable and shared: the same allocation is the same content.
-            (Arc::as_ptr(&l.line) as usize).hash(h);
-            l.x.to_bits().hash(h);
-            l.y.to_bits().hash(h);
-        };
         for e in &p.entries {
             match e {
-                Entry::Line(l) => line(l, &mut h),
+                Entry::Line(l) => hash_line(l, &mut h),
                 Entry::Box(b) => {
                     for v in [b.rect.x, b.rect.y, b.rect.w, b.rect.h] {
                         v.to_bits().hash(&mut h);
@@ -226,16 +223,47 @@ impl Layout {
                 }
             }
         }
+        0xffu8.hash(&mut h);
         for l in &p.running {
-            // Header lines are rebuilt on every layout: hash what they show.
-            for f in &l.line.frags {
-                if let FragKind::Text(t) = &f.kind {
-                    t.text.hash(&mut h);
-                }
-            }
-            l.y.to_bits().hash(&mut h);
+            hash_line(l, &mut h);
         }
         Some(h.finish())
+    }
+}
+
+/// Everything about a placed line that reaches the screen.
+fn hash_line(l: &PlacedLine, h: &mut impl Hasher) {
+    let line = &l.line;
+    for v in [l.x, l.y, l.box_w, line.height, line.baseline, line.descent] {
+        v.to_bits().hash(h);
+    }
+    l.background.hash(h);
+    line.frags.len().hash(h);
+    for f in &line.frags {
+        f.x.to_bits().hash(h);
+        f.advance.to_bits().hash(h);
+        match &f.kind {
+            FragKind::Text(t) => {
+                0u8.hash(h);
+                t.text.hash(h);
+                t.font.0.hash(h);
+                t.size.to_bits().hash(h);
+                t.rise.to_bits().hash(h);
+                t.color.hash(h);
+                t.background.hash(h);
+                (t.underline, t.strike).hash(h);
+                t.link.hash(h);
+            }
+            FragKind::Atom { kind, width, height, depth, data } => {
+                1u8.hash(h);
+                (*kind as u8).hash(h);
+                for v in [width, height, depth] {
+                    v.to_bits().hash(h);
+                }
+                data.hash(h);
+            }
+            FragKind::Space => 2u8.hash(h),
+        }
     }
 }
 
