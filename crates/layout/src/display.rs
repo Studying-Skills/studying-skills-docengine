@@ -4,11 +4,7 @@ use serde::{Deserialize, Serialize};
 use sfdoc_geom::{Point, Rect, Size};
 use sfdoc_model::Color;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct Layout {
-    pub pages: Vec<Page>,
-}
-
+/// One page ready to paint.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Page {
     pub size: Size,
@@ -25,6 +21,8 @@ pub enum Item {
         color: Color,
     },
     Glyphs(GlyphRun),
+    /// A box the painter fills itself: a picture or a formula.
+    Object(Object),
 }
 
 /// Glyphs of one font, size and colour on one baseline: a word or a part of one.
@@ -41,11 +39,10 @@ pub struct GlyphRun {
     pub glyphs: Vec<PlacedGlyph>,
     /// The characters the glyphs stand for: painters that draw text (the browser, PDF text) use it.
     pub text: String,
-    /// Width of the run in points.
+    /// Width of the run in points, trailing spaces included.
     pub width: f32,
-    /// Document positions covered: `from..to`.
-    pub from: u32,
-    pub to: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
 }
 
 /// A glyph and its offset from the run's origin in points (`y` grows downwards).
@@ -54,4 +51,27 @@ pub struct PlacedGlyph {
     pub id: u16,
     pub x: f32,
     pub y: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Object {
+    pub rect: Rect,
+    pub kind: ObjectKind,
+    /// Image path or formula source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<String>,
+    /// Document position of the object.
+    pub pos: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ObjectKind {
+    Image,
+    /// A formula inside a line of text.
+    Math,
+    /// A formula on its own line.
+    MathBlock,
+    Other,
 }

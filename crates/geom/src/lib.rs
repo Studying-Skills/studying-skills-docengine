@@ -75,20 +75,12 @@ impl Rect {
     }
     /// The rectangle shrunk by the given insets; never negative in size.
     pub fn inset(&self, left: f32, top: f32, right: f32, bottom: f32) -> Rect {
-        Rect::new(
-            self.x + left,
-            self.y + top,
-            (self.w - left - right).max(0.0),
-            (self.h - top - bottom).max(0.0),
-        )
+        Rect::new(self.x + left, self.y + top, (self.w - left - right).max(0.0), (self.h - top - bottom).max(0.0))
     }
 }
 
 /// A4 in points.
-pub const A4: Size = Size {
-    w: 210.0 * PT_PER_MM,
-    h: 297.0 * PT_PER_MM,
-};
+pub const A4: Size = Size { w: 210.0 * PT_PER_MM, h: 297.0 * PT_PER_MM };
 
 #[cfg(test)]
 mod tests {

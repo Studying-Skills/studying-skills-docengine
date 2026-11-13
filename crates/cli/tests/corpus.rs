@@ -14,12 +14,7 @@ fn corpus() -> Vec<(String, PathBuf)> {
         .unwrap()
         .map(|e| e.unwrap().path())
         .filter(|p| p.join("doc.json").exists())
-        .map(|p| {
-            (
-                p.file_name().unwrap().to_string_lossy().into_owned(),
-                p.join("doc.json"),
-            )
-        })
+        .map(|p| (p.file_name().unwrap().to_string_lossy().into_owned(), p.join("doc.json")))
         .collect();
     docs.sort();
     docs
@@ -45,7 +40,7 @@ fn layout_snapshots() {
         let doc = sfdoc_cli::read_doc(&path).unwrap();
         let layout = sfdoc_layout::layout(&doc, &fonts).unwrap();
         assert!(!layout.pages.is_empty(), "{name}: a document always has a page");
-        insta::assert_json_snapshot!(format!("layout__{name}"), layout);
+        insta::assert_snapshot!(format!("layout__{name}"), sfdoc_cli::describe(&layout));
     }
 }
 
@@ -66,22 +61,14 @@ fn render_writes_a_png_and_reports_bad_arguments() {
             .unwrap_err()
             .contains("page 9 was asked for")
     );
-    assert!(
-        sfdoc_cli::run(&s(&["render", doc, "--fonts", fonts]))
-            .unwrap_err()
-            .contains("-o")
-    );
+    assert!(sfdoc_cli::run(&s(&["render", doc, "--fonts", fonts])).unwrap_err().contains("-o"));
     assert!(
         sfdoc_cli::run(&s(&["render", doc, "-o", out_s, "--fonts", "/nonexistent"]))
             .unwrap_err()
             .contains("cannot read fonts")
     );
     assert!(sfdoc_cli::run(&s(&["inspect", "/nonexistent.json"])).is_err());
-    assert!(
-        sfdoc_cli::run(&s(&["frobnicate"]))
-            .unwrap_err()
-            .contains("unknown command")
-    );
+    assert!(sfdoc_cli::run(&s(&["frobnicate"])).unwrap_err().contains("unknown command"));
     assert!(sfdoc_cli::run(&[]).is_err());
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -16,7 +16,9 @@ sfdoc-model = { workspace = true }
 sfdoc-fonts = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
+unicode-linebreak = "0.1"
 
 [dev-dependencies]
+proptest = { workspace = true }
 insta = { workspace = true }
 serde_json = { workspace = true }

@@ -47,18 +47,51 @@ pub struct Document {
     pub version: u32,
     #[serde(default)]
     pub page: PageSetup,
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub running: Running,
     #[serde(default)]
     pub blocks: Vec<Block>,
 }
 
 impl Default for Document {
     fn default() -> Self {
-        Self {
-            version: FORMAT_VERSION,
-            page: PageSetup::default(),
-            blocks: Vec::new(),
-        }
+        Self { version: FORMAT_VERSION, page: PageSetup::default(), running: Running::default(), blocks: Vec::new() }
     }
+}
+
+/// Where the page number goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PageNumber {
+    #[default]
+    TopRight,
+    BottomCenter,
+    None,
+}
+
+/// Running header and footer: the same on every page, optionally absent on the first (title) page.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Running {
+    #[serde(default)]
+    pub header: String,
+    #[serde(default)]
+    pub footer: String,
+    #[serde(default)]
+    pub page_number: PageNumber,
+    /// The first page is a title page: no header, footer or number on it (it still counts as page 1).
+    #[serde(default = "yes")]
+    pub title_page: bool,
+}
+
+impl Default for Running {
+    fn default() -> Self {
+        Self { header: String::new(), footer: String::new(), page_number: PageNumber::TopRight, title_page: true }
+    }
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// Page size and margins in points. The default is A4 with the DSTU 3008 margins (left 30, right 10, top and
@@ -290,13 +323,7 @@ pub struct Cell {
 
 impl Default for Cell {
     fn default() -> Self {
-        Self {
-            header: false,
-            colspan: 1,
-            rowspan: 1,
-            background: None,
-            blocks: Vec::new(),
-        }
+        Self { header: false, colspan: 1, rowspan: 1, background: None, blocks: Vec::new() }
     }
 }
 
@@ -369,18 +396,9 @@ impl Document {
             return Err(ModelError::UnsupportedVersion(self.version));
         }
         let p = &self.page;
-        let lens = [
-            p.width,
-            p.height,
-            p.margin_top,
-            p.margin_right,
-            p.margin_bottom,
-            p.margin_left,
-        ];
+        let lens = [p.width, p.height, p.margin_top, p.margin_right, p.margin_bottom, p.margin_left];
         if lens.iter().any(|v| !v.is_finite() || *v < 0.0) || p.width <= 0.0 || p.height <= 0.0 {
-            return Err(ModelError::Invalid(
-                "page size and margins must be finite and not negative".into(),
-            ));
+            return Err(ModelError::Invalid("page size and margins must be finite and not negative".into()));
         }
         validate_blocks(&self.blocks, 0)
     }
@@ -388,11 +406,7 @@ impl Document {
     /// Replace the top-level blocks `from..to` with `blocks` (the editor's way of reporting an edit).
     pub fn replace_blocks(&mut self, from: usize, to: usize, blocks: Vec<Block>) -> Result<(), ModelError> {
         if from > to || to > self.blocks.len() {
-            return Err(ModelError::BadRange {
-                from,
-                to,
-                len: self.blocks.len(),
-            });
+            return Err(ModelError::BadRange { from, to, len: self.blocks.len() });
         }
         validate_blocks(&blocks, 0)?;
         self.blocks.splice(from..to, blocks);
@@ -415,17 +429,9 @@ fn validate_blocks(blocks: &[Block], depth: usize) -> Result<(), ModelError> {
                     return Err(ModelError::Invalid(format!("heading level {} (max 6)", p.level)));
                 }
                 let pr = &p.props;
-                let lens = [
-                    pr.indent_left,
-                    pr.indent_right,
-                    pr.indent_first,
-                    pr.space_before,
-                    pr.space_after,
-                ];
+                let lens = [pr.indent_left, pr.indent_right, pr.indent_first, pr.space_before, pr.space_after];
                 if lens.iter().flatten().any(|v| !v.is_finite()) {
-                    return Err(ModelError::Invalid(
-                        "paragraph indents and spacing must be finite".into(),
-                    ));
+                    return Err(ModelError::Invalid("paragraph indents and spacing must be finite".into()));
                 }
                 if pr.line_height.is_some_and(|v| !v.is_finite() || v <= 0.0) {
                     return Err(ModelError::Invalid("line height must be positive".into()));
@@ -453,9 +459,7 @@ fn validate_blocks(blocks: &[Block], depth: usize) -> Result<(), ModelError> {
             Block::Quote(q) => validate_blocks(&q.blocks, depth + 1)?,
             Block::Table(t) => {
                 if t.col_widths.iter().any(|v| !finite_non_negative(*v)) {
-                    return Err(ModelError::Invalid(
-                        "column widths must be finite and not negative".into(),
-                    ));
+                    return Err(ModelError::Invalid("column widths must be finite and not negative".into()));
                 }
                 for row in &t.rows {
                     for cell in &row.cells {

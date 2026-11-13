@@ -49,6 +49,8 @@ pub struct Font {
     data: Arc<Vec<u8>>,
     index: u32,
     metrics: Metrics,
+    /// Sorted, non-overlapping ranges of the code points the font has glyphs for.
+    coverage: Arc<Vec<(u32, u32)>>,
 }
 
 impl Font {
@@ -79,7 +81,33 @@ impl Font {
             strikeout_offset: strike.map_or(x_height * 0.5, |m| f32::from(m.position)),
             strikeout_thickness: strike.map_or(upm * 0.05, |m| f32::from(m.thickness)),
         };
-        Ok(Font { data, index, metrics })
+        let mut points = Vec::new();
+        if let Some(cmap) = face.tables().cmap {
+            for sub in cmap.subtables.into_iter().filter(|s| s.is_unicode()) {
+                sub.codepoints(|cp| {
+                    if sub.glyph_index(cp).is_some_and(|g| g.0 != 0) {
+                        points.push(cp);
+                    }
+                });
+            }
+        }
+        points.sort_unstable();
+        points.dedup();
+        let mut coverage: Vec<(u32, u32)> = Vec::new();
+        for cp in points {
+            match coverage.last_mut() {
+                Some(last) if last.1 + 1 == cp => last.1 = cp,
+                _ => coverage.push((cp, cp)),
+            }
+        }
+        Ok(Font { data, index, metrics, coverage: Arc::new(coverage) })
+    }
+
+    /// True when the font has a glyph for `c`. A table lookup: cheap enough to call per character.
+    pub fn covers(&self, c: char) -> bool {
+        let cp = c as u32;
+        let i = self.coverage.partition_point(|r| r.1 < cp);
+        self.coverage.get(i).is_some_and(|r| r.0 <= cp)
     }
 
     pub fn metrics(&self) -> &Metrics {
@@ -99,26 +127,16 @@ impl Font {
     pub fn describe(&self) -> Option<Description> {
         let face = ttf_parser::Face::parse(&self.data, self.index).ok()?;
         let name = |id: u16| {
-            face.names()
-                .into_iter()
-                .filter(|n| n.name_id == id && n.is_unicode())
-                .find_map(|n| n.to_string())
+            face.names().into_iter().filter(|n| n.name_id == id && n.is_unicode()).find_map(|n| n.to_string())
         };
         let family = name(ttf_parser::name_id::TYPOGRAPHIC_FAMILY).or_else(|| name(ttf_parser::name_id::FAMILY))?;
-        Some(Description {
-            family,
-            bold: face.is_bold(),
-            italic: face.is_italic(),
-        })
+        Some(Description { family, bold: face.is_bold(), italic: face.is_italic() })
     }
 
     /// A shaper borrowing this font. Parsing the face is cheap but not free: make one per layout pass, not per word.
     pub fn shaper(&self) -> Result<Shaper<'_>, FontError> {
         let face = rustybuzz::Face::from_slice(&self.data, self.index).ok_or(FontError::Unreadable)?;
-        Ok(Shaper {
-            face,
-            upm: self.metrics.units_per_em,
-        })
+        Ok(Shaper { face, upm: self.metrics.units_per_em })
     }
 }
 
@@ -203,16 +221,9 @@ impl Shaper<'_> {
         self.shape(text).iter().map(|g| g.x_advance).sum::<f32>() * size / self.upm
     }
 
-    /// True when the font has a glyph for `c`.
-    pub fn covers(&self, c: char) -> bool {
-        self.face.glyph_index(c).is_some()
-    }
-
     /// Feed the outline of a glyph to `sink`; `false` when the glyph has none (a space).
     pub fn outline(&self, glyph: u16, sink: &mut dyn OutlineSink) -> bool {
-        self.face
-            .outline_glyph(GlyphId(glyph), &mut SinkAdapter(sink))
-            .is_some()
+        self.face.outline_glyph(GlyphId(glyph), &mut SinkAdapter(sink)).is_some()
     }
 }
 
@@ -295,14 +306,32 @@ impl FontSet {
         // The exact style first, then drop italic, then bold, then both.
         for (b, i) in [(bold, italic), (bold, false), (false, italic), (false, false)] {
             if let Some(id) = self.by_key.get(&(family.to_owned(), b, i)) {
-                return Some(Resolved {
-                    id: *id,
-                    missing_bold: bold && !b,
-                    missing_italic: italic && !i,
-                });
+                return Some(Resolved { id: *id, missing_bold: bold && !b, missing_italic: italic && !i });
             }
         }
         None
+    }
+
+    /// A font for a character the preferred font lacks: the first registered face that has it, the wanted style
+    /// first. `None` when no loaded font has the character (the caller draws the missing-glyph box).
+    pub fn fallback_for(&self, c: char, bold: bool, italic: bool) -> Option<FontId> {
+        let mut any = None;
+        for ((_, b, i), id) in self.ordered_keys() {
+            if self.get(id).is_some_and(|f| f.covers(c)) {
+                if b == bold && i == italic {
+                    return Some(id);
+                }
+                any = any.or(Some(id));
+            }
+        }
+        any
+    }
+
+    /// Registered faces in registration order (a `HashMap` iteration would make layout nondeterministic).
+    fn ordered_keys(&self) -> Vec<((String, bool, bool), FontId)> {
+        let mut v: Vec<_> = self.by_key.iter().map(|(k, id)| (k.clone(), *id)).collect();
+        v.sort_by_key(|(_, id)| id.0);
+        v
     }
 
     /// The face for a family name and style: the family itself, its metric-compatible substitute, or the default

@@ -3,30 +3,16 @@ use proptest::prelude::*;
 use super::*;
 
 fn text(s: &str) -> Inline {
-    Inline::Text(Text {
-        text: s.to_owned(),
-        marks: Marks::default(),
-    })
+    Inline::Text(Text { text: s.to_owned(), marks: Marks::default() })
 }
 fn para(s: &str) -> Block {
-    Block::Paragraph(Paragraph {
-        inlines: if s.is_empty() { vec![] } else { vec![text(s)] },
-        ..Default::default()
-    })
+    Block::Paragraph(Paragraph { inlines: if s.is_empty() { vec![] } else { vec![text(s)] }, ..Default::default() })
 }
 fn leaf(kind: LeafKind) -> Block {
-    Block::Leaf(Leaf {
-        kind,
-        width: 0.0,
-        height: 0.0,
-        data: None,
-    })
+    Block::Leaf(Leaf { kind, width: 0.0, height: 0.0, data: None })
 }
 fn doc(blocks: Vec<Block>) -> Document {
-    Document {
-        blocks,
-        ..Default::default()
-    }
+    Document { blocks, ..Default::default() }
 }
 
 #[test]
@@ -36,34 +22,10 @@ fn paragraph_positions_follow_the_flat_token_scheme() {
     assert_eq!(d.text_between(0, 6, "\n"), "ab\n");
     assert_eq!(d.text_between(1, 2, "\n"), "a");
     assert_eq!(d.text_between(2, 3, "\n"), "b");
-    assert_eq!(
-        d.locate(0),
-        Loc {
-            block: 0,
-            block_start: 0
-        }
-    );
-    assert_eq!(
-        d.locate(3),
-        Loc {
-            block: 0,
-            block_start: 0
-        }
-    );
-    assert_eq!(
-        d.locate(4),
-        Loc {
-            block: 1,
-            block_start: 4
-        }
-    );
-    assert_eq!(
-        d.locate(6),
-        Loc {
-            block: 2,
-            block_start: 6
-        }
-    );
+    assert_eq!(d.locate(0), Loc { block: 0, block_start: 0 });
+    assert_eq!(d.locate(3), Loc { block: 0, block_start: 0 });
+    assert_eq!(d.locate(4), Loc { block: 1, block_start: 4 });
+    assert_eq!(d.locate(6), Loc { block: 2, block_start: 6 });
 }
 
 #[test]
@@ -81,36 +43,15 @@ fn text_counts_utf16_units() {
 
 #[test]
 fn containers_and_leaves_have_their_sizes() {
-    let cell = |s: &str| Cell {
-        blocks: vec![para(s)],
-        ..Default::default()
-    };
-    let table = Block::Table(Table {
-        col_widths: vec![],
-        rows: vec![Row {
-            cells: vec![cell("a"), cell("bc")],
-        }],
-    });
+    let cell = |s: &str| Cell { blocks: vec![para(s)], ..Default::default() };
+    let table = Block::Table(Table { col_widths: vec![], rows: vec![Row { cells: vec![cell("a"), cell("bc")] }] });
     // table 2 + row 2 + cell(2 + para 3) + cell(2 + para 4)
     assert_eq!(table.size(), 2 + 2 + 5 + 6);
-    let list = Block::List(List {
-        ordered: true,
-        style: None,
-        start: 1,
-        items: vec![ListItem {
-            blocks: vec![para("x")],
-        }],
-    });
+    let list =
+        Block::List(List { ordered: true, style: None, start: 1, items: vec![ListItem { blocks: vec![para("x")] }] });
     assert_eq!(list.size(), 2 + 2 + 3);
     assert_eq!(leaf(LeafKind::Rule).size(), 1);
-    let d = doc(vec![
-        leaf(LeafKind::Hidden),
-        list,
-        table,
-        Block::Quote(Quote {
-            blocks: vec![para("q")],
-        }),
-    ]);
+    let d = doc(vec![leaf(LeafKind::Hidden), list, table, Block::Quote(Quote { blocks: vec![para("q")] })]);
     assert_eq!(d.content_size(), 1 + 7 + 15 + 5);
     assert_eq!(d.text_between(0, d.content_size(), "|"), "x|a|bc|q");
     // The text of the second cell: list 1..8, table at 8, row at 9, first cell 10..15, second cell at 15, para at 16.
@@ -119,17 +60,8 @@ fn containers_and_leaves_have_their_sizes() {
 
 #[test]
 fn atoms_take_one_position_and_no_text() {
-    let atom = Inline::Atom(Atom {
-        kind: AtomKind::Math,
-        width: 10.0,
-        height: 8.0,
-        depth: 2.0,
-        data: None,
-    });
-    let d = doc(vec![Block::Paragraph(Paragraph {
-        inlines: vec![text("a"), atom, text("b")],
-        ..Default::default()
-    })]);
+    let atom = Inline::Atom(Atom { kind: AtomKind::Math, width: 10.0, height: 8.0, depth: 2.0, data: None });
+    let d = doc(vec![Block::Paragraph(Paragraph { inlines: vec![text("a"), atom, text("b")], ..Default::default() })]);
     assert_eq!(d.content_size(), 5);
     assert_eq!(d.text_between(0, 5, ""), "ab");
     assert_eq!(d.text_between(3, 4, ""), "b");
@@ -139,19 +71,13 @@ fn atoms_take_one_position_and_no_text() {
 fn json_is_compact_and_round_trips() {
     let d = doc(vec![para("Привіт")]);
     let json = d.to_json();
-    assert!(
-        json.contains(r#"{"type":"paragraph","inlines":[{"type":"text","text":"Привіт"}]}"#),
-        "{json}"
-    );
+    assert!(json.contains(r#"{"type":"paragraph","inlines":[{"type":"text","text":"Привіт"}]}"#), "{json}");
     assert_eq!(Document::from_json(&json), Ok(d));
 }
 
 #[test]
 fn colours_are_hex_strings() {
-    let marks = Marks {
-        color: Some(Color::rgb(255, 0, 16)),
-        ..Default::default()
-    };
+    let marks = Marks { color: Some(Color::rgb(255, 0, 16)), ..Default::default() };
     let json = serde_json::to_string(&marks).unwrap();
     assert_eq!(json, r##"{"color":"#ff0010"}"##);
     assert_eq!(Color::parse("#F00"), Some(Color::rgb(255, 0, 0)));
@@ -162,33 +88,19 @@ fn colours_are_hex_strings() {
 
 #[test]
 fn invalid_documents_are_rejected_not_laid_out() {
-    assert_eq!(
-        Document::from_json(r#"{"version":99,"blocks":[]}"#),
-        Err(ModelError::UnsupportedVersion(99))
-    );
+    assert_eq!(Document::from_json(r#"{"version":99,"blocks":[]}"#), Err(ModelError::UnsupportedVersion(99)));
     assert!(matches!(Document::from_json("{"), Err(ModelError::Json(_))));
     let bad = |json: &str| matches!(Document::from_json(json), Err(ModelError::Invalid(_)));
     assert!(bad(r#"{"version":1,"blocks":[{"type":"paragraph","level":7}]}"#));
-    assert!(bad(
-        r#"{"version":1,"blocks":[{"type":"paragraph","props":{"lineHeight":0}}]}"#
-    ));
-    assert!(bad(
-        r#"{"version":1,"blocks":[{"type":"leaf","kind":"image","width":-1}]}"#
-    ));
-    assert!(bad(
-        r#"{"version":1,"blocks":[{"type":"table","rows":[{"cells":[{"colspan":0,"blocks":[]}]}]}]}"#
-    ));
+    assert!(bad(r#"{"version":1,"blocks":[{"type":"paragraph","props":{"lineHeight":0}}]}"#));
+    assert!(bad(r#"{"version":1,"blocks":[{"type":"leaf","kind":"image","width":-1}]}"#));
+    assert!(bad(r#"{"version":1,"blocks":[{"type":"table","rows":[{"cells":[{"colspan":0,"blocks":[]}]}]}]}"#));
     assert!(bad(
         r#"{"version":1,"page":{"width":0,"height":10,"marginTop":0,"marginRight":0,"marginBottom":0,"marginLeft":0},"blocks":[]}"#
     ));
     // serde_json has no NaN literal, so non-finite numbers can only arrive through the API.
     let mut d = doc(vec![]);
-    let nan = Block::Leaf(Leaf {
-        kind: LeafKind::Image,
-        width: f32::NAN,
-        height: 1.0,
-        data: None,
-    });
+    let nan = Block::Leaf(Leaf { kind: LeafKind::Image, width: f32::NAN, height: 1.0, data: None });
     assert!(matches!(d.replace_blocks(0, 0, vec![nan]), Err(ModelError::Invalid(_))));
     assert!(d.blocks.is_empty());
 }
@@ -209,14 +121,8 @@ fn replace_blocks_edits_a_range() {
     assert_eq!(d.text_between(0, d.content_size(), "|"), "a|x|y|c");
     d.replace_blocks(0, 4, vec![]).unwrap();
     assert_eq!(d.content_size(), 0);
-    assert_eq!(
-        d.replace_blocks(1, 0, vec![]),
-        Err(ModelError::BadRange { from: 1, to: 0, len: 0 })
-    );
-    assert_eq!(
-        d.replace_blocks(0, 1, vec![]),
-        Err(ModelError::BadRange { from: 0, to: 1, len: 0 })
-    );
+    assert_eq!(d.replace_blocks(1, 0, vec![]), Err(ModelError::BadRange { from: 1, to: 0, len: 0 }));
+    assert_eq!(d.replace_blocks(0, 1, vec![]), Err(ModelError::BadRange { from: 0, to: 1, len: 0 }));
 }
 
 // ---- property tests -------------------------------------------------------------------------------------------
@@ -224,15 +130,7 @@ fn replace_blocks_edits_a_range() {
 fn arb_text() -> impl Strategy<Value = String> {
     // Latin, Cyrillic, spaces, a combining mark and an astral character (surrogate pair in UTF-16).
     proptest::collection::vec(
-        prop_oneof![
-            Just('a'),
-            Just('Ж'),
-            Just('ї'),
-            Just(' '),
-            Just('\u{301}'),
-            Just('😀'),
-            Just('\t')
-        ],
+        prop_oneof![Just('a'), Just('Ж'), Just('ї'), Just(' '), Just('\u{301}'), Just('😀'), Just('\t')],
         1..12,
     )
     .prop_map(|v| v.into_iter().collect())
@@ -246,13 +144,8 @@ fn arb_inline() -> impl Strategy<Value = Inline> {
 }
 
 fn arb_para() -> impl Strategy<Value = Block> {
-    (0u8..=3, proptest::collection::vec(arb_inline(), 0..5)).prop_map(|(level, inlines)| {
-        Block::Paragraph(Paragraph {
-            level,
-            inlines,
-            ..Default::default()
-        })
-    })
+    (0u8..=3, proptest::collection::vec(arb_inline(), 0..5))
+        .prop_map(|(level, inlines)| Block::Paragraph(Paragraph { level, inlines, ..Default::default() }))
 }
 
 pub(crate) fn arb_block() -> impl Strategy<Value = Block> {
@@ -260,37 +153,26 @@ pub(crate) fn arb_block() -> impl Strategy<Value = Block> {
     prop_oneof![4 => arb_para(), 1 => leaf].prop_recursive(3, 24, 4, |inner| {
         prop_oneof![
             proptest::collection::vec(inner.clone(), 1..3).prop_map(|blocks| Block::Quote(Quote { blocks })),
-            (
-                any::<bool>(),
-                proptest::collection::vec(proptest::collection::vec(inner.clone(), 1..3), 1..3)
-            )
-                .prop_map(|(ordered, items)| Block::List(List {
+            (any::<bool>(), proptest::collection::vec(proptest::collection::vec(inner.clone(), 1..3), 1..3)).prop_map(
+                |(ordered, items)| Block::List(List {
                     ordered,
                     style: None,
                     start: 1,
                     items: items.into_iter().map(|blocks| ListItem { blocks }).collect()
-                })),
-            proptest::collection::vec(
-                proptest::collection::vec(proptest::collection::vec(inner, 1..2), 1..3),
-                1..3
-            )
-            .prop_map(|rows| {
-                Block::Table(Table {
-                    col_widths: vec![],
-                    rows: rows
-                        .into_iter()
-                        .map(|cells| Row {
-                            cells: cells
-                                .into_iter()
-                                .map(|blocks| Cell {
-                                    blocks,
-                                    ..Default::default()
-                                })
-                                .collect(),
-                        })
-                        .collect(),
                 })
-            }),
+            ),
+            proptest::collection::vec(proptest::collection::vec(proptest::collection::vec(inner, 1..2), 1..3), 1..3)
+                .prop_map(|rows| {
+                    Block::Table(Table {
+                        col_widths: vec![],
+                        rows: rows
+                            .into_iter()
+                            .map(|cells| Row {
+                                cells: cells.into_iter().map(|blocks| Cell { blocks, ..Default::default() }).collect(),
+                            })
+                            .collect(),
+                    })
+                }),
         ]
     })
 }

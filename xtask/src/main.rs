@@ -52,52 +52,31 @@ fn layers() -> Result<String, String> {
             if let Some(dep_layer) = layer.get(dep_name.as_str())
                 && dep_layer >= own
             {
-                errors.push(format!(
-                    "{name} (layer {own}) depends on {dep_name} (layer {dep_layer})"
-                ));
+                errors.push(format!("{name} (layer {own}) depends on {dep_name} (layer {dep_layer})"));
             }
         }
     }
     if seen != LAYERS.len() {
-        errors.push(format!(
-            "LAYERS lists {} crates, the workspace has {seen} of them",
-            LAYERS.len()
-        ));
+        errors.push(format!("LAYERS lists {} crates, the workspace has {seen} of them", LAYERS.len()));
     }
-    if errors.is_empty() {
-        Ok(format!("layers: {seen} crates, no violations"))
-    } else {
-        Err(errors.join("\n"))
-    }
+    if errors.is_empty() { Ok(format!("layers: {seen} crates, no violations")) } else { Err(errors.join("\n")) }
 }
 
 fn step(name: &str, program: &str, args: &[&str]) -> Result<(), String> {
     eprintln!("── {name}: {program} {}", args.join(" "));
-    let status = Command::new(program)
-        .args(args)
-        .status()
-        .map_err(|e| format!("{name}: cannot run {program}: {e}"))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("{name} failed"))
-    }
+    let status = Command::new(program).args(args).status().map_err(|e| format!("{name}: cannot run {program}: {e}"))?;
+    if status.success() { Ok(()) } else { Err(format!("{name} failed")) }
 }
 
 fn wasm_size() -> Result<String, String> {
     let path = "crates/wasm/pkg/sfdoc_wasm_bg.wasm";
-    let out = Command::new("gzip")
-        .args(["-9", "-c", path])
-        .output()
-        .map_err(|e| format!("gzip: {e}"))?;
+    let out = Command::new("gzip").args(["-9", "-c", path]).output().map_err(|e| format!("gzip: {e}"))?;
     if !out.status.success() {
         return Err(format!("cannot read {path}"));
     }
     let size = out.stdout.len() as u64;
     if size > WASM_GZIP_BUDGET {
-        return Err(format!(
-            "wasm is {size} bytes gzip, over the budget of {WASM_GZIP_BUDGET}"
-        ));
+        return Err(format!("wasm is {size} bytes gzip, over the budget of {WASM_GZIP_BUDGET}"));
     }
     Ok(format!("wasm: {size} bytes gzip (budget {WASM_GZIP_BUDGET})"))
 }
@@ -105,18 +84,10 @@ fn wasm_size() -> Result<String, String> {
 fn ci() -> Result<String, String> {
     let cargo = env!("CARGO");
     step("fmt", cargo, &["fmt", "--all", "--check"])?;
-    step(
-        "clippy",
-        cargo,
-        &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"],
-    )?;
+    step("clippy", cargo, &["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"])?;
     step("test", cargo, &["test", "--workspace", "--quiet"])?;
     let l = layers()?;
-    step(
-        "wasm",
-        "wasm-pack",
-        &["build", "crates/wasm", "--release", "--target", "web", "--no-pack"],
-    )?;
+    step("wasm", "wasm-pack", &["build", "crates/wasm", "--release", "--target", "web", "--no-pack"])?;
     Ok(format!("{l}\n{}", wasm_size()?))
 }
 

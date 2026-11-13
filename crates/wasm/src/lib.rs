@@ -52,14 +52,63 @@ impl Engine {
         self.0.text_between(from, to, block_separator)
     }
 
-    /// Lay the document out if it changed; returns the number of pages.
-    pub fn layout(&mut self) -> Result<usize, JsError> {
+    /// Page size, margins, header and footer: `{"page": {...}, "running": {...}}`.
+    #[wasm_bindgen(js_name = setPage)]
+    pub fn set_page(&mut self, json: &str) -> Result<(), JsError> {
+        js(self.0.set_page(json))
+    }
+
+    /// Lay the document out if it changed; returns one fingerprint per page. A page whose fingerprint is the
+    /// same as before looks the same.
+    pub fn layout(&mut self) -> Result<Vec<f64>, JsError> {
         js(self.0.layout())
+    }
+
+    /// `[width, height]` of a page in points.
+    #[wasm_bindgen(js_name = pageSize)]
+    pub fn page_size(&self) -> Vec<f32> {
+        self.0.page_size()
     }
 
     /// Display list of page `index` (from 0) as JSON.
     pub fn page(&mut self, index: usize) -> Result<String, JsError> {
         js(self.0.page(index))
+    }
+
+    /// `[page, x, y, height]` of the caret at `pos`; empty when there is nowhere to put one.
+    #[wasm_bindgen(js_name = caretRect)]
+    pub fn caret_rect(&mut self, pos: u32) -> Result<Vec<f32>, JsError> {
+        js(self.0.caret_rect(pos))
+    }
+
+    /// Position nearest to a point of a page; -1 for an empty document.
+    #[wasm_bindgen(js_name = hitTest)]
+    pub fn hit_test(&mut self, page: usize, x: f32, y: f32) -> Result<i32, JsError> {
+        js(self.0.hit_test(page, x, y))
+    }
+
+    /// Flat list `page, x, y, width, height` per rectangle of the selection.
+    #[wasm_bindgen(js_name = selectionRects)]
+    pub fn selection_rects(&mut self, from: u32, to: u32) -> Result<Vec<f32>, JsError> {
+        js(self.0.selection_rects(from, to))
+    }
+
+    /// Position one line up or down, keeping page x `goal_x`.
+    #[wasm_bindgen(js_name = lineMove)]
+    pub fn line_move(&mut self, pos: u32, down: bool, goal_x: f32) -> Result<u32, JsError> {
+        js(self.0.line_move(pos, down, goal_x))
+    }
+
+    /// `[start, end]` of the line `pos` is on.
+    #[wasm_bindgen(js_name = lineBounds)]
+    pub fn line_bounds(&mut self, pos: u32) -> Result<Vec<u32>, JsError> {
+        js(self.0.line_bounds(pos))
+    }
+
+    /// Page (from 0) of a position; -1 for an empty document.
+    #[wasm_bindgen(js_name = pageOf)]
+    pub fn page_of(&mut self, pos: u32) -> Result<i32, JsError> {
+        js(self.0.page_of(pos))
     }
 }
 

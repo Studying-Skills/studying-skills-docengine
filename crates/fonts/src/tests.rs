@@ -1,20 +1,14 @@
 use super::*;
 
 fn load(style: &str) -> Font {
-    let path = format!(
-        "{}/../../assets/fonts/liberation/LiberationSerif-{style}.ttf",
-        env!("CARGO_MANIFEST_DIR")
-    );
+    let path = format!("{}/../../assets/fonts/liberation/LiberationSerif-{style}.ttf", env!("CARGO_MANIFEST_DIR"));
     Font::from_bytes(std::fs::read(path).unwrap()).unwrap()
 }
 
 #[test]
 fn garbage_is_an_error_not_a_panic() {
     assert_eq!(Font::from_bytes(vec![]).unwrap_err(), FontError::Unreadable);
-    assert_eq!(
-        Font::from_bytes(b"not a font at all".to_vec()).unwrap_err(),
-        FontError::Unreadable
-    );
+    assert_eq!(Font::from_bytes(b"not a font at all".to_vec()).unwrap_err(), FontError::Unreadable);
     let mut truncated = std::fs::read(format!(
         "{}/../../assets/fonts/liberation/LiberationSerif-Regular.ttf",
         env!("CARGO_MANIFEST_DIR")
@@ -42,15 +36,9 @@ fn ukrainian_text_shapes_one_glyph_per_letter_with_clusters() {
     let s = font.shaper().unwrap();
     let glyphs = s.shape("Її Єґ");
     assert_eq!(glyphs.len(), 5);
-    assert!(
-        glyphs.iter().all(|g| g.id != 0),
-        "a letter fell back to .notdef: {glyphs:?}"
-    );
+    assert!(glyphs.iter().all(|g| g.id != 0), "a letter fell back to .notdef: {glyphs:?}");
     // Clusters are byte offsets: Cyrillic letters are two bytes each, the space one.
-    assert_eq!(
-        glyphs.iter().map(|g| g.cluster).collect::<Vec<_>>(),
-        vec![0, 2, 4, 5, 7]
-    );
+    assert_eq!(glyphs.iter().map(|g| g.cluster).collect::<Vec<_>>(), vec![0, 2, 4, 5, 7]);
     assert!(s.shape("").is_empty());
 }
 
@@ -75,8 +63,8 @@ fn kerning_is_applied() {
 fn coverage_and_outlines() {
     let font = load("Regular");
     let s = font.shaper().unwrap();
-    assert!(s.covers('ґ') && s.covers('A') && s.covers('№'));
-    assert!(!s.covers('日') && !s.covers('😀'));
+    assert!(font.covers('ґ') && font.covers('A') && font.covers('№') && font.covers(' '));
+    assert!(!font.covers('日') && !font.covers('😀') && !font.covers('\u{10FFFF}'));
 
     #[derive(Default)]
     struct Count(usize, usize);
@@ -117,21 +105,13 @@ fn font_set_resolves_word_names_styles_and_fallbacks() {
     assert_eq!(r(Some("Liberation Serif"), false, false).id, regular);
     assert_eq!(
         r(Some("Times New Roman"), true, false),
-        Resolved {
-            id: bold,
-            missing_bold: false,
-            missing_italic: false
-        }
+        Resolved { id: bold, missing_bold: false, missing_italic: false }
     );
     assert_eq!(r(Some("'Times New Roman', serif"), false, true).id, italic);
     // No bold italic face was added: bold wins and the italic is reported missing.
     assert_eq!(
         r(Some("times new roman"), true, true),
-        Resolved {
-            id: bold,
-            missing_bold: false,
-            missing_italic: true
-        }
+        Resolved { id: bold, missing_bold: false, missing_italic: true }
     );
     // An unknown family and no family at all fall back to the default family, keeping the style.
     assert_eq!(r(Some("Comic Sans MS"), true, false).id, bold);
@@ -145,23 +125,26 @@ fn font_set_resolves_word_names_styles_and_fallbacks() {
 #[test]
 fn a_font_file_describes_itself() {
     let d = |s| load(s).describe().unwrap();
-    assert_eq!(
-        d("Regular"),
-        Description {
-            family: "Liberation Serif".into(),
-            bold: false,
-            italic: false
-        }
-    );
-    assert_eq!(
-        d("BoldItalic"),
-        Description {
-            family: "Liberation Serif".into(),
-            bold: true,
-            italic: true
-        }
-    );
+    assert_eq!(d("Regular"), Description { family: "Liberation Serif".into(), bold: false, italic: false });
+    assert_eq!(d("BoldItalic"), Description { family: "Liberation Serif".into(), bold: true, italic: true });
     let mut set = FontSet::new();
     let (id, _) = set.add_described(load("Italic")).unwrap();
     assert_eq!(set.resolve(Some("Times New Roman"), false, true).unwrap().id, id);
+}
+
+#[test]
+fn fallback_finds_a_loaded_font_that_has_the_character() {
+    let sans = |style: &str| {
+        let path = format!("{}/../../assets/fonts/liberation/LiberationSans-{style}.ttf", env!("CARGO_MANIFEST_DIR"));
+        Font::from_bytes(std::fs::read(path).unwrap()).unwrap()
+    };
+    let mut set = FontSet::new();
+    let serif = set.add("Liberation Serif", false, false, load("Regular"));
+    let sans_regular = set.add("Liberation Sans", false, false, sans("Regular"));
+    let sans_bold = set.add("Liberation Sans", true, false, sans("Bold"));
+    // Both families have Cyrillic: the first registered face wins, the wanted style is preferred.
+    assert_eq!(set.fallback_for('ж', false, false), Some(serif));
+    assert_eq!(set.fallback_for('ж', true, false), Some(sans_bold));
+    let _ = sans_regular;
+    assert_eq!(set.fallback_for('😀', false, false), None);
 }

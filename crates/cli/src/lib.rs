@@ -13,8 +13,8 @@ sfdoc — StudyFlow document engine
       print the document's structure: blocks, positions, text
   sfdoc render <doc.json> -o <out.png> [--page N] [--scale S] [--fonts DIR]
       lay the document out and write one page as PNG (page 1, scale 2 = 144 dpi by default)
-  sfdoc layout <doc.json> [--fonts DIR]
-      lay the document out and print the display list as JSON
+  sfdoc layout <doc.json> [--fonts DIR] [--page N]
+      lay the document out and print where every line and box landed; with --page, that page's display list as JSON
 
 Fonts are read from --fonts, else $SFDOC_FONTS, else ./assets/fonts (every .ttf and .otf below it).";
 
@@ -45,9 +45,7 @@ pub fn load_fonts(dir: &Path) -> Result<FontSet, String> {
     for path in files {
         let data = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let font = Font::from_bytes(data).map_err(|e| format!("{}: {e}", path.display()))?;
-        let d = font
-            .describe()
-            .ok_or_else(|| format!("{}: the font has no family name", path.display()))?;
+        let d = font.describe().ok_or_else(|| format!("{}: the font has no family name", path.display()))?;
         fonts.push((d, font));
     }
     fonts.sort_by_key(|(d, _)| (d.bold, d.italic));
@@ -69,11 +67,7 @@ fn kind(b: &Block) -> String {
     match b {
         Block::Paragraph(p) if p.level > 0 => format!("heading {}", p.level),
         Block::Paragraph(_) => "paragraph".into(),
-        Block::List(l) => format!(
-            "{} list, {} items",
-            if l.ordered { "ordered" } else { "bullet" },
-            l.items.len()
-        ),
+        Block::List(l) => format!("{} list, {} items", if l.ordered { "ordered" } else { "bullet" }, l.items.len()),
         Block::Quote(_) => "quote".into(),
         Block::Table(t) => format!("table, {} rows", t.rows.len()),
         Block::Leaf(l) => format!("{:?}", l.kind).to_lowercase(),
@@ -130,11 +124,69 @@ pub fn inspect(doc: &Document) -> String {
     out
 }
 
+/// Where every line and box of a layout landed: one row each, coordinates in points rounded to 0.01.
+/// This is what the layout snapshots pin; a change here is a change on the page.
+pub fn describe(layout: &sfdoc_layout::Layout) -> String {
+    use sfdoc_layout::Entry;
+    use sfdoc_layout::para::FragKind;
+    let mut out = String::new();
+    let text_of = |l: &sfdoc_layout::PlacedLine| -> String {
+        let mut s = String::new();
+        for f in &l.line.frags {
+            match &f.kind {
+                FragKind::Text(t) => s.push_str(&t.text),
+                FragKind::Atom { kind, .. } => s.push_str(&format!("[{kind:?}]").to_lowercase()),
+                FragKind::Space => s.push('·'),
+            }
+        }
+        s
+    };
+    for (i, p) in layout.pages.iter().enumerate() {
+        let _ = writeln!(out, "page {} — {} entries", i + 1, p.entries.len());
+        for l in &p.running {
+            let _ = writeln!(
+                out,
+                "  running  y {:>7.2}  x {:>7.2}  w {:>7.2}  {}",
+                l.y,
+                l.x + l.line.x,
+                l.line.width,
+                text_of(l)
+            );
+        }
+        for e in &p.entries {
+            let (from, to) = e.span();
+            match e {
+                Entry::Line(l) => {
+                    let _ = writeln!(
+                        out,
+                        "  line  y {:>7.2}  h {:>6.2}  x {:>7.2}  w {:>7.2}  {from:>5}..{to:<5} {}",
+                        l.y,
+                        l.line.height,
+                        l.x + l.line.x,
+                        l.line.width,
+                        text_of(l)
+                    );
+                }
+                Entry::Box(b) => {
+                    let kind = format!("{:?}", b.kind).to_lowercase();
+                    let _ = writeln!(
+                        out,
+                        "  box   y {:>7.2}  h {:>6.2}  x {:>7.2}  w {:>7.2}  {from:>5}..{to:<5} {kind}",
+                        b.rect.y, b.rect.h, b.rect.x, b.rect.w
+                    );
+                }
+            }
+        }
+    }
+    out
+}
+
 fn sfdoc_geom_mm(pt: f32) -> f32 {
     pt * 25.4 / 72.0
 }
 
 struct Args {
+    page_given: bool,
     positional: Vec<String>,
     out: Option<PathBuf>,
     page: usize,
@@ -143,13 +195,7 @@ struct Args {
 }
 
 fn parse(args: &[String]) -> Result<Args, String> {
-    let mut a = Args {
-        positional: Vec::new(),
-        out: None,
-        page: 1,
-        scale: 2.0,
-        fonts: None,
-    };
+    let mut a = Args { page_given: false, positional: Vec::new(), out: None, page: 1, scale: 2.0, fonts: None };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| it.next().cloned().ok_or_else(|| format!("{name} needs a value"));
@@ -157,11 +203,8 @@ fn parse(args: &[String]) -> Result<Args, String> {
             "-o" | "--out" => a.out = Some(value("-o")?.into()),
             "--fonts" => a.fonts = Some(value("--fonts")?.into()),
             "--page" => {
-                a.page = value("--page")?
-                    .parse()
-                    .ok()
-                    .filter(|n| *n >= 1)
-                    .ok_or("--page takes a number from 1")?
+                a.page = value("--page")?.parse().ok().filter(|n| *n >= 1).ok_or("--page takes a number from 1")?;
+                a.page_given = true;
             }
             "--scale" => {
                 a.scale = value("--scale")?
@@ -190,40 +233,33 @@ pub fn run(args: &[String]) -> Result<String, String> {
         return Err(USAGE.to_owned());
     };
     let a = parse(rest)?;
-    let doc_path = || {
-        a.positional
-            .first()
-            .map(PathBuf::from)
-            .ok_or_else(|| format!("{cmd}: which document?\n\n{USAGE}"))
-    };
+    let doc_path =
+        || a.positional.first().map(PathBuf::from).ok_or_else(|| format!("{cmd}: which document?\n\n{USAGE}"));
     match cmd.as_str() {
         "inspect" => Ok(inspect(&read_doc(&doc_path()?)?)),
         "layout" => {
             let doc = read_doc(&doc_path()?)?;
-            let layout = sfdoc_layout::layout(&doc, &load_fonts(&fonts_dir(&a))?).map_err(|e| e.to_string())?;
-            serde_json::to_string_pretty(&layout).map_err(|e| e.to_string())
+            let fonts = load_fonts(&fonts_dir(&a))?;
+            let layout = sfdoc_layout::layout(&doc, &fonts).map_err(|e| e.to_string())?;
+            if a.page_given {
+                let page = layout.page(a.page - 1, &fonts).ok_or_else(|| {
+                    format!("the document has {} pages, page {} was asked for", layout.pages.len(), a.page)
+                })?;
+                return serde_json::to_string_pretty(&page).map_err(|e| e.to_string());
+            }
+            Ok(describe(&layout))
         }
         "render" => {
             let doc = read_doc(&doc_path()?)?;
             let out = a.out.clone().ok_or("render: -o <out.png> is required")?;
             let fonts = load_fonts(&fonts_dir(&a))?;
             let layout = sfdoc_layout::layout(&doc, &fonts).map_err(|e| e.to_string())?;
-            let page = layout.pages.get(a.page - 1).ok_or_else(|| {
-                format!(
-                    "the document has {} pages, page {} was asked for",
-                    layout.pages.len(),
-                    a.page
-                )
+            let page = layout.page(a.page - 1, &fonts).ok_or_else(|| {
+                format!("the document has {} pages, page {} was asked for", layout.pages.len(), a.page)
             })?;
-            let png = sfdoc_raster::render_png(page, &fonts, a.scale).map_err(|e| e.to_string())?;
+            let png = sfdoc_raster::render_png(&page, &fonts, a.scale).map_err(|e| e.to_string())?;
             std::fs::write(&out, &png).map_err(|e| format!("{}: {e}", out.display()))?;
-            Ok(format!(
-                "page {} of {} → {} ({} bytes)\n",
-                a.page,
-                layout.pages.len(),
-                out.display(),
-                png.len()
-            ))
+            Ok(format!("page {} of {} → {} ({} bytes)\n", a.page, layout.pages.len(), out.display(), png.len()))
         }
         "help" | "--help" | "-h" => Ok(format!("{USAGE}\n")),
         other => Err(format!("unknown command {other}\n\n{USAGE}")),

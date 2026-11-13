@@ -35,23 +35,11 @@ impl OutlineSink for PathSink<'_> {
         self.pb.line_to(self.ox + x * self.k, self.oy - y * self.k);
     }
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        self.pb.quad_to(
-            self.ox + x1 * self.k,
-            self.oy - y1 * self.k,
-            self.ox + x * self.k,
-            self.oy - y * self.k,
-        );
+        self.pb.quad_to(self.ox + x1 * self.k, self.oy - y1 * self.k, self.ox + x * self.k, self.oy - y * self.k);
     }
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
         let (k, ox, oy) = (self.k, self.ox, self.oy);
-        self.pb.cubic_to(
-            ox + x1 * k,
-            oy - y1 * k,
-            ox + x2 * k,
-            oy - y2 * k,
-            ox + x * k,
-            oy - y * k,
-        );
+        self.pb.cubic_to(ox + x1 * k, oy - y1 * k, ox + x2 * k, oy - y2 * k, ox + x * k, oy - y * k);
     }
     fn close(&mut self) {
         self.pb.close();
@@ -69,12 +57,7 @@ fn draw_run(pixmap: &mut Pixmap, run: &GlyphRun, shaper: &Shaper<'_>, upm: f32, 
     let mut pb = PathBuilder::new();
     let k = run.size / upm * scale;
     for g in &run.glyphs {
-        let mut sink = PathSink {
-            pb: &mut pb,
-            k,
-            ox: (run.origin.x + g.x) * scale,
-            oy: (run.origin.y + g.y) * scale,
-        };
+        let mut sink = PathSink { pb: &mut pb, k, ox: (run.origin.x + g.x) * scale, oy: (run.origin.y + g.y) * scale };
         shaper.outline(g.id, &mut sink);
     }
     if let Some(path) = pb.finish() {
@@ -103,6 +86,18 @@ pub fn render_page(page: &Page, fonts: &FontSet, scale: f32) -> Result<Pixmap, R
                 let shaper = font.shaper().map_err(|_| RasterError::MissingFont(run.font))?;
                 draw_run(&mut pixmap, run, &shaper, font.metrics().units_per_em, scale);
             }
+            // Pictures and formulas are drawn by whoever has them; here a framed grey box marks their place.
+            Item::Object(o) => {
+                let r = o.rect;
+                if let Some(outer) = Rect::from_xywh(r.x * scale, r.y * scale, r.w * scale, r.h * scale) {
+                    pixmap.fill_rect(outer, &paint(Color::rgb(150, 150, 150)), Transform::identity(), None);
+                }
+                if let Some(inner) =
+                    Rect::from_xywh(r.x * scale + 1.0, r.y * scale + 1.0, r.w * scale - 2.0, r.h * scale - 2.0)
+                {
+                    pixmap.fill_rect(inner, &paint(Color::rgb(235, 235, 235)), Transform::identity(), None);
+                }
+            }
         }
     }
     Ok(pixmap)
@@ -110,9 +105,7 @@ pub fn render_page(page: &Page, fonts: &FontSet, scale: f32) -> Result<Pixmap, R
 
 /// [`render_page`] encoded as PNG.
 pub fn render_png(page: &Page, fonts: &FontSet, scale: f32) -> Result<Vec<u8>, RasterError> {
-    render_page(page, fonts, scale)?
-        .encode_png()
-        .map_err(|_| RasterError::Encode)
+    render_page(page, fonts, scale)?.encode_png().map_err(|_| RasterError::Encode)
 }
 
 #[cfg(test)]
@@ -124,12 +117,8 @@ mod tests {
 
     fn fonts() -> FontSet {
         let mut set = FontSet::new();
-        let path = format!(
-            "{}/../../assets/fonts/liberation/LiberationSerif-Regular.ttf",
-            env!("CARGO_MANIFEST_DIR")
-        );
-        set.add_described(Font::from_bytes(std::fs::read(path).unwrap()).unwrap())
-            .unwrap();
+        let path = format!("{}/../../assets/fonts/liberation/LiberationSerif-Regular.ttf", env!("CARGO_MANIFEST_DIR"));
+        set.add_described(Font::from_bytes(std::fs::read(path).unwrap()).unwrap()).unwrap();
         set
     }
 
@@ -157,34 +146,17 @@ mod tests {
             .shape(text)
             .iter()
             .map(|g| {
-                let p = PlacedGlyph {
-                    id: g.id,
-                    x: x + g.x_offset * k,
-                    y: -g.y_offset * k,
-                };
+                let p = PlacedGlyph { id: g.id, x: x + g.x_offset * k, y: -g.y_offset * k };
                 x += g.x_advance * k;
                 p
             })
             .collect();
-        GlyphRun {
-            font: 0,
-            size,
-            origin,
-            color: Color::BLACK,
-            glyphs,
-            text: text.into(),
-            width: x,
-            from: 0,
-            to: 0,
-        }
+        GlyphRun { font: 0, size, origin, color: Color::BLACK, glyphs, text: text.into(), width: x, link: None }
     }
 
     #[test]
     fn a_blank_page_is_white_and_sized_by_the_scale() {
-        let page = Page {
-            size: Size { w: 100.0, h: 50.0 },
-            items: vec![],
-        };
+        let page = Page { size: Size { w: 100.0, h: 50.0 }, items: vec![] };
         let p = render_page(&page, &fonts(), 2.0).unwrap();
         assert_eq!((p.width(), p.height()), (200, 100));
         assert_eq!(ink(&p), None);
@@ -197,28 +169,19 @@ mod tests {
         // "НН" has no descenders and no overshoot: its ink sits between the cap height and the baseline.
         let r = run("НН", 40.0, Point { x: 10.0, y: 60.0 }, &set);
         let width = r.width;
-        let page = Page {
-            size: Size { w: 120.0, h: 80.0 },
-            items: vec![Item::Glyphs(r)],
-        };
+        let page = Page { size: Size { w: 120.0, h: 80.0 }, items: vec![Item::Glyphs(r)] };
         let (l, t, rt, b) = ink(&render_page(&page, &set, 1.0).unwrap()).unwrap();
         let cap = set.get(FontId(0)).unwrap().metrics().cap_height * 40.0 / 2048.0;
         assert!((b as f32 - 59.0).abs() <= 1.0, "bottom {b}");
         assert!((t as f32 - (60.0 - cap)).abs() <= 1.5, "top {t}, cap height {cap}");
-        assert!(
-            l >= 10 && (rt as f32) <= 10.0 + width + 1.0,
-            "ink {l}..{rt}, run width {width}"
-        );
+        assert!(l >= 10 && (rt as f32) <= 10.0 + width + 1.0, "ink {l}..{rt}, run width {width}");
     }
 
     #[test]
     fn rectangles_and_colours() {
         let page = Page {
             size: Size { w: 20.0, h: 20.0 },
-            items: vec![Item::Rect {
-                rect: sfdoc_geom::Rect::new(5.0, 5.0, 10.0, 4.0),
-                color: Color::rgb(200, 0, 0),
-            }],
+            items: vec![Item::Rect { rect: sfdoc_geom::Rect::new(5.0, 5.0, 10.0, 4.0), color: Color::rgb(200, 0, 0) }],
         };
         let p = render_page(&page, &fonts(), 1.0).unwrap();
         let c = p.pixel(10, 7).unwrap();
@@ -229,22 +192,13 @@ mod tests {
     #[test]
     fn bad_input_is_an_error() {
         let set = fonts();
-        let huge = Page {
-            size: Size { w: 1e9, h: 10.0 },
-            items: vec![],
-        };
+        let huge = Page { size: Size { w: 1e9, h: 10.0 }, items: vec![] };
         assert!(matches!(render_page(&huge, &set, 1.0), Err(RasterError::BadSize(..))));
-        let nan = Page {
-            size: Size { w: f32::NAN, h: 10.0 },
-            items: vec![],
-        };
+        let nan = Page { size: Size { w: f32::NAN, h: 10.0 }, items: vec![] };
         assert!(matches!(render_page(&nan, &set, 1.0), Err(RasterError::BadSize(..))));
         let mut r = run("а", 10.0, Point { x: 0.0, y: 10.0 }, &set);
         r.font = 5;
-        let page = Page {
-            size: Size { w: 20.0, h: 20.0 },
-            items: vec![Item::Glyphs(r)],
-        };
+        let page = Page { size: Size { w: 20.0, h: 20.0 }, items: vec![Item::Glyphs(r)] };
         assert_eq!(render_page(&page, &set, 1.0).unwrap_err(), RasterError::MissingFont(5));
     }
 }

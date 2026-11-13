@@ -78,11 +78,7 @@ fn walk<'a>(blocks: &'a [Block], mut pos: u32, f: &mut dyn FnMut(Event<'a>)) {
     for b in blocks {
         match b {
             Block::Paragraph(p) => {
-                f(Event::Textblock {
-                    pos,
-                    size: 2 + p.content_size(),
-                    para: p,
-                });
+                f(Event::Textblock { pos, size: 2 + p.content_size(), para: p });
                 let mut at = pos + 1;
                 for i in &p.inlines {
                     match i {
@@ -134,17 +130,11 @@ impl Document {
         for (i, b) in self.blocks.iter().enumerate() {
             let end = start + b.size();
             if pos < end {
-                return Loc {
-                    block: i,
-                    block_start: start,
-                };
+                return Loc { block: i, block_start: start };
             }
             start = end;
         }
-        Loc {
-            block: self.blocks.len(),
-            block_start: start,
-        }
+        Loc { block: self.blocks.len(), block_start: start }
     }
 
     /// The text between two positions. `block_separator` is put before every text block after the first one

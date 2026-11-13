@@ -1,15 +1,5 @@
 ---
 source: crates/cli/tests/corpus.rs
-expression: layout
+expression: "sfdoc_cli::describe(&layout)"
 ---
-{
-  "pages": [
-    {
-      "size": {
-        "w": 595.27563,
-        "h": 841.8898
-      },
-      "items": []
-    }
-  ]
-}
+page 1 — 0 entries
