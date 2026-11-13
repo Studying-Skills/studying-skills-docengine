@@ -25,6 +25,17 @@ impl Engine {
         js(self.0.add_font(data))
     }
 
+    #[wasm_bindgen(js_name = fontCount)]
+    pub fn font_count(&self) -> usize {
+        self.0.font_count()
+    }
+
+    /// `[ascent, descent]` of a font (by loading order) as fractions of the font size; empty for an unknown index.
+    #[wasm_bindgen(js_name = fontMetrics)]
+    pub fn font_metrics(&self, index: u32) -> Vec<f32> {
+        self.0.font_metrics(index)
+    }
+
     /// Replace the whole document (engine JSON); returns its content size.
     #[wasm_bindgen(js_name = setDocument)]
     pub fn set_document(&mut self, json: &str) -> Result<u32, JsError> {

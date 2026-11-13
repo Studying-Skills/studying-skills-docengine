@@ -30,6 +30,20 @@ impl Engine {
         Ok(format!("{}|{}|{}", d.family, d.bold, d.italic))
     }
 
+    /// How many fonts are loaded. Display lists name fonts by their index in loading order.
+    pub fn font_count(&self) -> usize {
+        self.fonts.len()
+    }
+
+    /// `[ascent, descent]` of font `index` as fractions of the font size: a painter that places text by the top
+    /// of its box needs them to hit the baseline the layout chose.
+    pub fn font_metrics(&self, index: u32) -> Vec<f32> {
+        self.fonts.get(sfdoc_fonts::FontId(index)).map_or_else(Vec::new, |f| {
+            let m = f.metrics();
+            vec![m.ascent / m.units_per_em, m.descent / m.units_per_em]
+        })
+    }
+
     /// Replace the whole document; returns its content size. Page settings set earlier are kept unless the
     /// document states its own.
     pub fn set_document(&mut self, json: &str) -> Result<u32, String> {
@@ -191,6 +205,8 @@ mod tests {
         let mut e = Engine::new();
         assert_eq!(e.layout().unwrap_err(), "no fonts are loaded");
         assert_eq!(e.add_font(font()).unwrap(), "Liberation Serif|false|false");
+        assert_eq!((e.font_count(), e.font_metrics(0)), (1, vec![1825.0 / 2048.0, 443.0 / 2048.0]));
+        assert!(e.font_metrics(1).is_empty());
         assert_eq!(e.set_document(DOC).unwrap(), 16);
         let before = e.layout().unwrap();
         assert_eq!(before.len(), 1);
