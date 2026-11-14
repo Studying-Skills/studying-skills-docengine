@@ -14,6 +14,9 @@ const LAYERS: &[(&str, u8)] = &[
     ("sfdoc-pdf", 3),
     ("sfdoc-wasm", 4),
     ("sfdoc-cli", 4),
+    // The speller stands apart from layout: it shares no crate with it and ships as its own wasm module.
+    ("sfdoc-spell", 0),
+    ("sfdoc-spell-wasm", 4),
 ];
 
 /// Size budget of the release wasm, gzip-compressed (plan, section 8).
@@ -89,6 +92,7 @@ fn ci() -> Result<String, String> {
     step("test", cargo, &["test", "--workspace", "--quiet"])?;
     let l = layers()?;
     step("wasm", "wasm-pack", &["build", "crates/wasm", "--release", "--target", "web", "--no-pack"])?;
+    step("spell wasm", "wasm-pack", &["build", "crates/spell-wasm", "--release", "--target", "web", "--no-pack"])?;
     Ok(format!("{l}\n{}", wasm_size()?))
 }
 

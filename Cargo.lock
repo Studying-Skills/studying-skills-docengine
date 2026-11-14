@@ -277,6 +277,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
+name = "foldhash"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
 name = "font-types"
 version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -897,6 +903,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "sfdoc-spell"
+version = "0.1.0"
+dependencies = [
+ "spellbook",
+]
+
+[[package]]
+name = "sfdoc-spell-wasm"
+version = "0.1.0"
+dependencies = [
+ "sfdoc-spell",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "sfdoc-wasm"
 version = "0.1.0"
 dependencies = [
@@ -961,6 +982,16 @@ name = "smallvec"
 version = "1.16.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "149309498a5f7334b12ddae0cad8aba81ce785fe91755068867e017cf98fee46"
+
+[[package]]
+name = "spellbook"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d204abcbdf8e88729306a8d0ca01a79d8a49969fe1f84696909d6dbc4321c1a"
+dependencies = [
+ "foldhash",
+ "hashbrown",
+]
 
 [[package]]
 name = "stable_deref_trait"

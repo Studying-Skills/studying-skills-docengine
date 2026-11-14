@@ -1,0 +1,14 @@
+[package]
+name = "sfdoc-spell"
+description = "Spelling of the StudyFlow document engine: words of a paragraph against Hunspell dictionaries"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+spellbook = "0.4"
