@@ -318,12 +318,24 @@ pub struct Cell {
     pub rowspan: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub background: Option<Color>,
+    /// Where the content stands in a cell taller than it; at the top when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub valign: Option<VAlign>,
     pub blocks: Vec<Block>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VAlign {
+    #[default]
+    Top,
+    Middle,
+    Bottom,
 }
 
 impl Default for Cell {
     fn default() -> Self {
-        Self { header: false, colspan: 1, rowspan: 1, background: None, blocks: Vec::new() }
+        Self { header: false, colspan: 1, rowspan: 1, background: None, valign: None, blocks: Vec::new() }
     }
 }
 
@@ -339,6 +351,12 @@ pub struct Leaf {
     /// Kind-specific reference: image path, formula source.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
+    /// Where an image or a formula stands across the text area; centred when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<Align>,
+    /// Text set at the right edge of the text area, level with the middle of the box: an equation number "(3)".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

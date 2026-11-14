@@ -33,7 +33,7 @@ fn heading(level: u8, s: &str) -> Block {
     Block::Paragraph(Paragraph { level, inlines: vec![t(s)], ..Default::default() })
 }
 fn leaf(kind: LeafKind, width: f32, height: f32) -> Block {
-    Block::Leaf(Leaf { kind, width, height, data: None })
+    Block::Leaf(Leaf { kind, width, height, data: None, align: None, label: None })
 }
 fn doc(blocks: Vec<Block>) -> Document {
     Document { blocks, ..Default::default() }
@@ -821,6 +821,67 @@ fn boxes(l: &Layout) -> Vec<(usize, &PlacedBox)> {
 }
 
 #[test]
+fn a_picture_stands_left_centred_or_right_and_a_formula_carries_its_number_at_the_right_edge() {
+    let pic =
+        |align| Block::Leaf(Leaf { kind: LeafKind::Image, width: 100.0, height: 50.0, data: None, align, label: None });
+    let formula = Block::Leaf(Leaf {
+        kind: LeafKind::Math,
+        width: 120.0,
+        height: 40.0,
+        data: None,
+        align: None,
+        label: Some("(12)".into()),
+    });
+    let d = doc(vec![pic(None), pic(Some(Align::Left)), pic(Some(Align::Right)), formula, para("Після.")]);
+    let l = lay(&d);
+    let b = boxes(&l);
+    assert!((b[0].1.rect.x - (LEFT + (TEXT_W - 100.0) / 2.0)).abs() < 0.01);
+    assert!((b[1].1.rect.x - LEFT).abs() < 0.01);
+    assert!((b[2].1.rect.right() - (LEFT + TEXT_W)).abs() < 0.01);
+    // The formula stays centred; its number is a drawn-only line ending at the right edge, level with its middle.
+    let f = b[3].1.rect;
+    assert!((f.x - (LEFT + (TEXT_W - 120.0) / 2.0)).abs() < 0.01);
+    let number = l.pages[0].running.iter().find(|pl| line_text(pl) == "(12)").unwrap();
+    assert!((number.x + number.line.x + number.line.width - (LEFT + TEXT_W)).abs() < 0.01);
+    assert!((number.y + number.line.height / 2.0 - (f.y + f.h / 2.0)).abs() < 0.01);
+    // The number takes no positions: the document is as long as without it, and the caret skips it.
+    assert!(lines(&l).iter().all(|(_, pl)| line_text(pl) != "(12)"));
+    // It is part of what the page looks like.
+    let mut other = d.clone();
+    if let Some(Block::Leaf(leaf)) = other.blocks.get_mut(3) {
+        leaf.label = Some("(13)".into());
+    }
+    assert_ne!(l.fingerprint(0), lay(&other).fingerprint(0));
+}
+
+#[test]
+fn cell_content_stands_at_the_top_the_middle_or_the_bottom_of_a_taller_cell() {
+    let tall = "довгий текст, якого вистачить на кілька рядків у вузькій клітинці таблиці, щоб рядок став високим";
+    let with = |valign| Cell { valign, ..cell("а") };
+    let d = doc(vec![table(
+        vec![100.0, 100.0, 100.0, 100.0],
+        vec![vec![with(None), with(Some(VAlign::Middle)), with(Some(VAlign::Bottom)), cell(tall)]],
+    )]);
+    let l = lay(&d);
+    let page = &l.pages[0];
+    let row = page.cells[0];
+    let line = |r: u16| lines(&l).into_iter().find(|(_, pl)| pl.region == r).unwrap().1;
+    let (top, middle, bottom) = (line(1), line(2), line(3));
+    assert!((top.y - (row.y + flow::CELL_TOP)).abs() < 0.01);
+    assert!((bottom.y + bottom.line.height - (row.bottom() - flow::CELL_EXTRA + flow::CELL_TOP)).abs() < 0.01);
+    assert!((middle.y - (top.y + bottom.y) / 2.0).abs() < 0.01);
+    assert!(bottom.y > top.y + 20.0);
+    // The row is no taller for it.
+    let mut plain = d.clone();
+    if let Some(Block::Table(t)) = plain.blocks.get_mut(0) {
+        for c in &mut t.rows[0].cells {
+            c.valign = None;
+        }
+    }
+    assert_eq!(lay(&plain).pages[0].cells[0].h, row.h);
+}
+
+#[test]
 fn table_cells_stand_side_by_side_in_a_grid() {
     let d = doc(vec![
         para("До таблиці."),
@@ -1176,6 +1237,8 @@ fn toc(title: &str) -> Block {
         width: 0.0,
         height: 0.0,
         data: (!title.is_empty()).then(|| title.to_owned()),
+        align: None,
+        label: None,
     })
 }
 
@@ -1299,7 +1362,14 @@ fn arb_block() -> impl Strategy<Value = Block> {
         Just(leaf(LeafKind::Rule, 0.0, 0.0)),
         Just(leaf(LeafKind::PageBreak, 0.0, 0.0)),
         Just(leaf(LeafKind::Hidden, 0.0, 0.0)),
-        Just(Block::Leaf(Leaf { kind: LeafKind::Toc, width: 0.0, height: 0.0, data: Some("Зміст".into()) })),
+        Just(Block::Leaf(Leaf {
+            kind: LeafKind::Toc,
+            width: 0.0,
+            height: 0.0,
+            data: Some("Зміст".into()),
+            align: None,
+            label: None
+        })),
         (20.0f32..700.0, 20.0f32..900.0).prop_map(|(w, h)| leaf(LeafKind::Image, w, h)),
     ];
     prop_oneof![8 => p, 2 => l].prop_recursive(2, 12, 3, |inner| {

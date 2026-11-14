@@ -9,7 +9,7 @@ fn para(s: &str) -> Block {
     Block::Paragraph(Paragraph { inlines: if s.is_empty() { vec![] } else { vec![text(s)] }, ..Default::default() })
 }
 fn leaf(kind: LeafKind) -> Block {
-    Block::Leaf(Leaf { kind, width: 0.0, height: 0.0, data: None })
+    Block::Leaf(Leaf { kind, width: 0.0, height: 0.0, data: None, align: None, label: None })
 }
 fn doc(blocks: Vec<Block>) -> Document {
     Document { blocks, ..Default::default() }
@@ -100,7 +100,8 @@ fn invalid_documents_are_rejected_not_laid_out() {
     ));
     // serde_json has no NaN literal, so non-finite numbers can only arrive through the API.
     let mut d = doc(vec![]);
-    let nan = Block::Leaf(Leaf { kind: LeafKind::Image, width: f32::NAN, height: 1.0, data: None });
+    let nan =
+        Block::Leaf(Leaf { kind: LeafKind::Image, width: f32::NAN, height: 1.0, data: None, align: None, label: None });
     assert!(matches!(d.replace_blocks(0, 0, vec![nan]), Err(ModelError::Invalid(_))));
     assert!(d.blocks.is_empty());
 }

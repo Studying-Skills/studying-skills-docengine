@@ -11,7 +11,9 @@
 use std::sync::Arc;
 
 use sfdoc_geom::{Rect, cm};
-use sfdoc_model::{Align, Block, Color, Leaf, LeafKind, List, PageNumber, PageSetup, Paragraph, Running, Table};
+use sfdoc_model::{
+    Align, Block, Color, Leaf, LeafKind, List, PageNumber, PageSetup, Paragraph, Running, Table, VAlign,
+};
 
 use crate::para::{Line, ParaInput, Shapers, layout_paragraph};
 use crate::style::{CODE_BLOCK_COLOR, Context, LIST_HANGING, LIST_INDENT, ParaStyle, TextDefaults, para_style};
@@ -138,6 +140,7 @@ pub struct CellFlow {
     /// Height the content needs, padding included.
     pub height: f32,
     pub background: Option<Color>,
+    pub valign: VAlign,
 }
 
 impl TableFlow {
@@ -210,6 +213,25 @@ pub struct BoxFlow {
     pub space_before: f32,
     pub space_after: f32,
     pub data: Option<String>,
+    /// A line drawn level with the middle of the box and holding no positions (an equation number), with the left
+    /// edge and the width of the text area it is aligned in.
+    pub label: Option<(Arc<Line>, f32, f32)>,
+}
+
+impl BoxFlow {
+    /// The label as a drawn-only line for a box placed with its top at `top` and `h` tall.
+    fn label_line(&self, left: f32, top: f32, h: f32) -> Option<PlacedLine> {
+        let (line, x, width) = self.label.as_ref()?;
+        Some(PlacedLine {
+            line: Arc::clone(line),
+            x: left + x,
+            y: top + (h - line.height) / 2.0,
+            box_w: *width,
+            base: 0,
+            background: None,
+            region: 0,
+        })
+    }
 }
 
 /// The flow items of one top-level block, with what they were computed from.
@@ -416,19 +438,51 @@ impl Flattener<'_, '_> {
     }
 
     fn leaf(&mut self, l: &Leaf, x: f32, width: f32, pos: u32) {
+        // An equation number: one line at the right edge of the text area, in the body font.
+        let label = l.label.as_deref().map(str::trim).filter(|t| !t.is_empty()).and_then(|text| {
+            let style = ParaStyle {
+                align: Align::Right,
+                line_mult: 1.0,
+                left: 0.0,
+                right: 0.0,
+                first: 0.0,
+                space_before: 0.0,
+                space_after: 0.0,
+                keep_next: false,
+                keep_lines: false,
+                page_break_before: false,
+                code: false,
+                text: TextDefaults {
+                    family: crate::style::BODY_FONT,
+                    size: crate::style::BODY_SIZE,
+                    bold: false,
+                    italic: false,
+                },
+            };
+            let para = Paragraph { inlines: vec![plain(text, Default::default())], ..Default::default() };
+            let inp = ParaInput { para: &para, style: &style, width, marker: None, footnote_base: 0 };
+            let line = layout_paragraph(&inp, self.sh)?.into_iter().next()?;
+            Some((Arc::new(line), x, width))
+        });
         let boxed = |w: f32, h: f32, gap: f32, centre: bool| {
             // Too wide for the text area: scale down, keeping the proportions.
             let k = if w > width && w > 0.0 { width / w } else { 1.0 };
             let (w, h) = (w * k, h * k);
+            let at = match (centre, l.align) {
+                (false, _) | (true, Some(Align::Left | Align::Justify)) => x,
+                (true, Some(Align::Right)) => x + (width - w),
+                (true, Some(Align::Center) | None) => x + (width - w) / 2.0,
+            };
             BoxFlow {
                 pos,
                 kind: l.kind,
-                x: if centre { x + (width - w) / 2.0 } else { x },
+                x: at,
                 w,
                 h,
                 space_before: gap,
                 space_after: gap,
                 data: l.data.clone(),
+                label: if centre { label.clone() } else { None },
             }
         };
         let item = match l.kind {
@@ -639,6 +693,7 @@ impl Flattener<'_, '_> {
                     items,
                     height,
                     background: s.cell.background,
+                    valign: s.cell.valign.unwrap_or_default(),
                 });
             }
         }
@@ -969,6 +1024,9 @@ fn place_some(
                         data: b.data.clone(),
                         region,
                     }));
+                    if let Some(label) = b.label_line(left, y + used + g, h) {
+                        page.running.push(label);
+                    }
                 }
                 used += g + h;
                 cur.item += 1;
@@ -1121,12 +1179,19 @@ fn place_rows(
             let rect = cell_rect(t, c, left, top, t.rows_height(r, (r + c.rowspan).min(to)));
             cell_decor(rect, c.background, page);
             let region = open_region(rect, ghost, page);
+            // A cell taller than its content (a taller neighbour, a merged cell): the content may stand lower.
+            let spare = (rect.h - c.height).max(0.0);
+            let down = match c.valign {
+                VAlign::Top => 0.0,
+                VAlign::Middle => spare / 2.0,
+                VAlign::Bottom => spare,
+            };
             place_some(
                 &c.items,
                 &mut Cursor::default(),
                 start,
                 left,
-                top + CELL_TOP,
+                top + CELL_TOP + down,
                 f32::INFINITY,
                 true,
                 region,
@@ -1279,6 +1344,9 @@ pub fn paginate(page: &PageSetup, flows: &[(u32, Arc<BlockFlow>)]) -> Vec<PageLa
                     data: b.data.clone(),
                     region: 0,
                 }));
+                if let (Some(label), Some(page)) = (b.label_line(left, y, h), pg.pages.last_mut()) {
+                    page.running.push(label);
+                }
                 pg.y = y + h;
                 pg.pending = b.space_after;
             }

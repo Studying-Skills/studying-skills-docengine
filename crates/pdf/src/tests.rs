@@ -56,8 +56,14 @@ fn every_layout_page_becomes_a_pdf_page() {
 #[test]
 fn a_missing_picture_is_reported_and_does_not_stop_the_export() {
     let f = fonts();
-    let image =
-        Block::Leaf(Leaf { kind: LeafKind::Image, width: 100.0, height: 50.0, data: Some("figs/a.png".into()) });
+    let image = Block::Leaf(Leaf {
+        kind: LeafKind::Image,
+        width: 100.0,
+        height: 50.0,
+        data: Some("figs/a.png".into()),
+        align: None,
+        label: None,
+    });
     let doc = Document { blocks: vec![para("до"), image.clone(), image], ..Default::default() };
     let layout = sfdoc_layout::layout(&doc, &f).unwrap();
     let (_, report) = write_pdf(&layout, &f, &NoAssets, &Info { readable: true, ..Default::default() }).unwrap();
