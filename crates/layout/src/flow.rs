@@ -1097,13 +1097,18 @@ fn place_some(
     page: &mut PageLayout,
 ) -> f32 {
     let mut used = 0.0f32;
+    // A cell that continues from the page before starts at the top of its part: no gap above the first piece,
+    // just as there is none at the top of a page.
+    let mut resumed = true;
     while let Some(item) = items.get(cur.item) {
-        let gap = |before: f32, cur: &Cursor| if cur.started { cur.pending.max(before) } else { 0.0 };
+        let gap = |before: f32, cur: &Cursor, resumed: bool| {
+            if cur.started && !resumed { cur.pending.max(before) } else { 0.0 }
+        };
         match item {
             FlowItem::PageBreak { .. } => cur.item += 1,
             FlowItem::Para(p) => {
                 while let Some(l) = p.lines.get(cur.line) {
-                    let g = if cur.line == 0 { gap(p.space_before, cur) } else { 0.0 };
+                    let g = if cur.line == 0 { gap(p.space_before, cur, resumed) } else { 0.0 };
                     if used + g + l.height > room + 0.01 && !force {
                         return used;
                     }
@@ -1127,13 +1132,14 @@ fn place_some(
                     cur.started = true;
                     cur.pending = 0.0;
                     force = false;
+                    resumed = false;
                 }
                 cur.item += 1;
                 cur.line = 0;
                 cur.pending = p.space_after;
             }
             FlowItem::Box(b) => {
-                let g = gap(b.space_before, cur);
+                let g = gap(b.space_before, cur, resumed);
                 if used + g + b.h > room + 0.01 && !force {
                     return used;
                 }
@@ -1158,10 +1164,11 @@ fn place_some(
                 cur.started = true;
                 cur.pending = b.space_after;
                 force = false;
+                resumed = false;
             }
             FlowItem::Toc(t) => {
                 // Inside a cell a table of contents is one unsplittable block.
-                let g = gap(t.space_before, cur);
+                let g = gap(t.space_before, cur, resumed);
                 let h: f32 = toc_lines(t).map(|l| l.height).sum();
                 if used + g + h > room + 0.01 && !force {
                     return used;
@@ -1175,13 +1182,14 @@ fn place_some(
                 cur.started = true;
                 cur.pending = t.space_after;
                 force = false;
+                resumed = false;
             }
             FlowItem::Table(t) => {
                 // A table inside a cell goes row by row (`cur.line` is the next row): what does not fit continues
                 // where the cell does. Rows tied by a spanning cell stay together.
                 while cur.line < t.rows.len() {
                     let end = t.group_end(cur.line);
-                    let g = if cur.line == 0 { gap(t.space_before, cur) } else { 0.0 };
+                    let g = if cur.line == 0 { gap(t.space_before, cur, resumed) } else { 0.0 };
                     let h = t.rows_height(cur.line, end);
                     if used + g + h > room + 0.01 && !force {
                         return used;
@@ -1192,6 +1200,7 @@ fn place_some(
                     cur.started = true;
                     cur.pending = 0.0;
                     force = false;
+                    resumed = false;
                 }
                 cur.item += 1;
                 cur.line = 0;

@@ -18,6 +18,7 @@ expect_used = "deny"
 panic = "deny"
 
 [dependencies]
+sfdoc-geom = { workspace = true }
 sfdoc-model = { workspace = true }
 sfdoc-fonts = { workspace = true }
 sfdoc-layout = { workspace = true }

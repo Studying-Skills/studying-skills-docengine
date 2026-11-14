@@ -1,8 +1,10 @@
 //! The engine as the editor drives it: fonts in, document in, edits in, pages out. No JavaScript types here, so
 //! the whole flow is tested natively.
 
+use serde::Serialize;
 use sfdoc_fonts::{Font, FontSet};
-use sfdoc_layout::{Layout, Layouter};
+use sfdoc_geom::{Point, Rect, Size};
+use sfdoc_layout::{Item, Layout, Layouter, Object, Page};
 use sfdoc_model::{Block, Document};
 
 #[derive(Default)]
@@ -198,12 +200,12 @@ impl Engine {
         vec![self.doc.page.width, self.doc.page.height]
     }
 
-    /// The display list of page `index` (from 0) as JSON.
+    /// The display list of page `index` (from 0) as JSON, in the form the screen needs (see [`screen_json`]).
     pub fn page(&mut self, index: usize) -> Result<String, String> {
         self.ensure_layout()?;
         let Some(layout) = self.layout.as_ref() else { return Err("layout is missing".into()) };
         let page = layout.page(index, &self.fonts).ok_or_else(|| format!("page {index} of {}", layout.pages.len()))?;
-        serde_json::to_string(&page).map_err(|e| e.to_string())
+        screen_json(&page)
     }
 
     /// The display list of page `index` with the marks of what is typed but not printed (spaces, tabs, line
@@ -214,7 +216,7 @@ impl Engine {
         let page = layout
             .page_with(index, &self.fonts, true)
             .ok_or_else(|| format!("page {index} of {}", layout.pages.len()))?;
-        serde_json::to_string(&page).map_err(|e| e.to_string())
+        screen_json(&page)
     }
 
     /// Table cells of a page as a flat list: `x, y, width, height` for every cell.
@@ -289,6 +291,67 @@ impl Engine {
     }
 }
 
+/// A page as the screen paints it. The browser draws the text of a run itself, so the glyphs stay out: they
+/// are nine tenths of the full display list, and the editor reads a page on every keystroke. What the screen
+/// still needs from them is where the visible part of a run ends when it has trailing spaces (`ink`).
+#[derive(Serialize)]
+struct ScreenPage<'a> {
+    size: Size,
+    items: Vec<ScreenItem<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum ScreenItem<'a> {
+    Rect {
+        rect: Rect,
+        color: sfdoc_model::Color,
+    },
+    Glyphs {
+        font: u32,
+        size: f32,
+        origin: Point,
+        color: sfdoc_model::Color,
+        text: &'a str,
+        width: f32,
+        /// Width up to the first trailing space; absent when the run has none.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ink: Option<f32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        link: Option<&'a str>,
+    },
+    Object(&'a Object),
+}
+
+fn screen_json(page: &Page) -> Result<String, String> {
+    let items = page
+        .items
+        .iter()
+        .map(|item| match item {
+            Item::Rect { rect, color } => ScreenItem::Rect { rect: *rect, color: *color },
+            Item::Glyphs(run) => {
+                let spaces = run.text.chars().rev().take_while(|c| *c == ' ').count();
+                // The glyphs of the trailing spaces come last: the visible part ends where the first begins.
+                let ink = (spaces > 0)
+                    .then(|| run.glyphs.len().checked_sub(spaces).and_then(|i| run.glyphs.get(i)).map(|g| g.x))
+                    .flatten();
+                ScreenItem::Glyphs {
+                    font: run.font,
+                    size: run.size,
+                    origin: run.origin,
+                    color: run.color,
+                    text: &run.text,
+                    width: run.width,
+                    ink,
+                    link: run.link.as_deref(),
+                }
+            }
+            Item::Object(object) => ScreenItem::Object(object),
+        })
+        .collect();
+    serde_json::to_string(&ScreenPage { size: page.size, items }).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -328,6 +391,35 @@ mod tests {
         // The same layout asked for again: the same fingerprints.
         assert_eq!(e.layout().unwrap(), after);
         assert!(after.iter().all(|f| *f >= 0.0 && *f < 9_007_199_254_740_992.0 && f.fract() == 0.0));
+    }
+
+    #[test]
+    fn the_screen_page_has_the_text_of_a_run_without_its_glyphs() {
+        let mut e = Engine::new();
+        e.add_font(font()).unwrap();
+        e.set_document(
+            r#"{"version":1,"blocks":[{"type":"paragraph","inlines":[{"type":"text","text":"Два слова"}]}]}"#,
+        )
+        .unwrap();
+        let page: serde_json::Value = serde_json::from_str(&e.page(0).unwrap()).unwrap();
+        let runs: Vec<&serde_json::Value> =
+            page["items"].as_array().unwrap().iter().filter(|i| i["type"] == "glyphs").collect();
+        assert_eq!(runs.iter().filter(|r| r.get("ink").is_some()).count(), 1);
+        for run in &runs {
+            assert!(run.get("glyphs").is_none());
+            assert!(run["text"].is_string() && run["width"].is_number() && run["origin"]["x"].is_number());
+            let text = run["text"].as_str().unwrap();
+            // A run that ends with spaces says where its visible part ends; others do not carry the field.
+            match run.get("ink") {
+                Some(ink) => {
+                    assert!(text.ends_with(' '));
+                    let ink = ink.as_f64().unwrap();
+                    assert!(ink > 0.0 && ink < run["width"].as_f64().unwrap());
+                }
+                None => assert!(!text.ends_with(' ')),
+            }
+        }
+        assert_eq!(page["size"]["w"].as_f64().unwrap().round(), 595.0);
     }
 
     #[test]
