@@ -70,7 +70,8 @@ impl Engine {
         self.0.text_between(from, to, block_separator)
     }
 
-    /// Page size, margins, header and footer: `{"page": {...}, "running": {...}}`.
+    /// Page size and margins, header and footer, text settings, styles:
+    /// `{"page": {...}, "running": {...}, "text": {...}, "styles": {...}}`; any part may be left out.
     #[wasm_bindgen(js_name = setPage)]
     pub fn set_page(&mut self, json: &str) -> Result<(), JsError> {
         js(self.0.set_page(json))
@@ -91,6 +92,18 @@ impl Engine {
     /// Display list of page `index` (from 0) as JSON.
     pub fn page(&mut self, index: usize) -> Result<String, JsError> {
         js(self.0.page(index))
+    }
+
+    /// Display list of page `index` with spaces, tabs, line breaks and paragraph ends marked (screen only).
+    #[wasm_bindgen(js_name = pageMarked)]
+    pub fn page_marked(&mut self, index: usize) -> Result<String, JsError> {
+        js(self.0.page_marked(index))
+    }
+
+    /// Table cells of a page: `x, y, width, height` per cell, a nested table's cells after the cell holding it.
+    #[wasm_bindgen(js_name = cellRects)]
+    pub fn cell_rects(&mut self, page: usize) -> Result<Vec<f32>, JsError> {
+        js(self.0.cell_rects(page))
     }
 
     /// `[page, x, y, height]` of the caret at `pos`; empty when there is nowhere to put one.

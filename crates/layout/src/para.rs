@@ -96,6 +96,8 @@ pub struct Line {
     pub width: f32,
     /// The line ends its paragraph or ends with a forced break (such lines are never justified).
     pub hard: bool,
+    /// The line ends its paragraph.
+    pub para_end: bool,
     /// Hash of what the line looks like (not of where it is or which positions it holds): page fingerprints are
     /// made of these, so an unchanged line is hashed once, not on every keystroke.
     pub look: u64,
@@ -147,6 +149,18 @@ pub struct ParaInput<'a> {
     pub marker: Option<(&'a str, f32)>,
     /// Number of footnotes before this paragraph: its first footnote mark is `footnote_base + 1`.
     pub footnote_base: u32,
+    /// A picture stands beside the paragraph's first lines.
+    pub narrow: Option<Narrow>,
+    /// Break words at the ends of lines.
+    pub hyphenate: bool,
+}
+
+/// Lines whose top is above `until` (from the paragraph's top) are shorter by `inset`, on the right or on the left.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Narrow {
+    pub right: bool,
+    pub inset: f32,
+    pub until: f32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -297,6 +311,29 @@ impl Builder<'_, '_> {
         Some(())
     }
 
+    /// The unit cut at the last syllable boundary whose first part, with a hyphen, is not wider than `room`.
+    /// The hyphen is drawn but holds no position: the caret at the end of the line stands before it.
+    fn hyphenated(&self, u: &Unit, room: f32) -> Option<(Unit, Unit)> {
+        let UnitKind::Text { style, font, text, .. } = &u.kind else { return None };
+        // The word inside the unit: quotes and brackets may stand before it, punctuation and spaces after.
+        let start = text.char_indices().find(|c| crate::hyphen::is_word_char(c.1))?.0;
+        let word = text.get(start..)?;
+        let len = word.char_indices().find(|c| !crate::hyphen::is_word_char(c.1)).map_or(word.len(), |c| c.0);
+        let word = word.get(..len)?;
+        for cut in crate::hyphen::points(word).into_iter().rev() {
+            let (head, tail) = (text.get(..start + cut)?, text.get(start + cut..)?);
+            let mut first = self.text_unit(&format!("{head}-"), *style, *font, u.from, Brk::Allowed)?;
+            if first.width > room {
+                continue;
+            }
+            first.len = utf16_len(head);
+            first.carets.truncate(first.len as usize + 1);
+            let second = self.text_unit(tail, *style, *font, u.from + first.len, u.brk)?;
+            return Some((first, second));
+        }
+        None
+    }
+
     fn fixed_unit(&self, kind: UnitKind, from: u32, width: f32, ascent: f32, descent: f32, brk: Brk) -> Unit {
         Unit {
             kind,
@@ -316,7 +353,7 @@ impl Builder<'_, '_> {
 
 /// Metrics of the paragraph's own font: an empty line is as tall as a line of text.
 fn base_metrics(style: &ParaStyle, fonts: &FontSet) -> Option<(f32, f32, f32)> {
-    let id = fonts.resolve(Some(style.text.family), style.text.bold, style.text.italic)?.id;
+    let id = fonts.resolve(Some(&style.text.family), style.text.bold, style.text.italic)?.id;
     let m = fonts.get(id)?.metrics();
     let k = style.text.size / m.units_per_em;
     Some((m.ascent * k, m.descent * k, m.line_height(style.text.size)))
@@ -337,7 +374,7 @@ pub fn layout_paragraph(inp: &ParaInput<'_>, sh: &Shapers<'_>) -> Option<Vec<Lin
 /// Widths the paragraph's text asks for, indents included: all on one line, and with every allowed break taken
 /// (the widest piece that cannot be broken). Table columns are sized from these.
 pub fn paragraph_widths(para: &Paragraph, style: &ParaStyle, sh: &Shapers<'_>) -> Option<(f32, f32)> {
-    let inp = ParaInput { para, style, width: 1.0e6, marker: None, footnote_base: 0 };
+    let inp = ParaInput { para, style, width: 1.0e6, marker: None, footnote_base: 0, narrow: None, hyphenate: false };
     let mut min = 0.0f32;
     let lines = layout_impl(&inp, sh, Some(&mut min))?;
     let indent = style.left + style.right + style.first.max(0.0);
@@ -492,16 +529,21 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
     // 4. Fill lines greedily.
     let mut lines: Vec<Line> = Vec::new();
     let mut y = 0.0f32;
-    let text_left = |first: bool| style.left + if first { style.first } else { 0.0 };
-    let avail = |first: bool| (inp.width - text_left(first) - style.right).max(1.0);
+    // A picture beside the line takes its share of the width, on its side.
+    let inset = |y: f32, right: bool| match inp.narrow {
+        Some(n) if n.right == right && y < n.until - 0.01 => n.inset,
+        _ => 0.0,
+    };
+    let text_left = |first: bool, y: f32| style.left + if first { style.first } else { 0.0 } + inset(y, false);
+    let avail = |first: bool, y: f32| (inp.width - text_left(first, y) - style.right - inset(y, true)).max(1.0);
     let mut current: Vec<Unit> = Vec::new();
     let mut x = 0.0f32;
     let mut content_end = 0u32;
 
     let finish = |current: &mut Vec<Unit>, hard: bool, lines: &mut Vec<Line>, y: &mut f32, line_from: u32| {
         let first = lines.is_empty();
-        let left = text_left(first);
-        let room = avail(first);
+        let left = text_left(first, *y);
+        let room = avail(first, *y);
         let last_trail = current.last().map_or(0.0, |u| u.trail);
         let natural: f32 = current.iter().map(|u| u.width).sum::<f32>() - last_trail;
         // Spaces that may stretch: trailing spaces of every unit but the last one on the line.
@@ -628,6 +670,7 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
             x: left + offset,
             width: natural,
             hard,
+            para_end: false,
         });
         *y += height;
     };
@@ -643,12 +686,12 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
             }
         }
         let first = lines.is_empty();
-        let room = avail(first);
+        let room = avail(first, y);
         // Tabs get their width from where they land on the line.
         let mut seg_x = x;
         for u in &mut seg {
             if matches!(u.kind, UnitKind::Tab) {
-                let abs = text_left(first) + seg_x;
+                let abs = text_left(first, y) + seg_x;
                 u.width = ((abs / TAB).floor() + 1.0) * TAB - abs;
                 u.carets = vec![0.0, u.width];
             }
@@ -663,7 +706,25 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
             0.0
         };
         if seg_trim > room + EPS + squeeze && !current.is_empty() {
-            // Does not fit after what is already on the line: wrap and try again on a fresh line.
+            // Does not fit after what is already on the line. With hyphenation on, the beginning of the word may:
+            // the line then ends with it and a hyphen.
+            if inp.hyphenate
+                && let Some((head, tail)) = seg.first().and_then(|u| b.hyphenated(u, room + EPS - x))
+            {
+                let mut rest = seg.into_iter();
+                rest.next();
+                for u in rest.rev() {
+                    units.push_front(u);
+                }
+                units.push_front(tail);
+                content_end = head.from + head.len;
+                current.push(head);
+                finish(&mut current, false, &mut lines, &mut y, line_from);
+                line_from = content_end;
+                x = 0.0;
+                continue;
+            }
+            // Wrap and try again on a fresh line.
             for u in seg.into_iter().rev() {
                 units.push_front(u);
             }
@@ -757,6 +818,9 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
     }
     if !current.is_empty() || lines.is_empty() {
         finish(&mut current, true, &mut lines, &mut y, line_from);
+    }
+    if let Some(last) = lines.last_mut() {
+        last.para_end = true;
     }
     Some(lines)
 }

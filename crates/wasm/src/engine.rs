@@ -134,23 +134,33 @@ impl Engine {
         Ok(self.doc.content_size())
     }
 
-    /// Page size, margins and running header/footer as JSON: `{"page": {...}, "running": {...}}`; either part
-    /// may be left out. Refused settings change nothing.
+    /// Page size, margins, running header/footer, text settings and styles as JSON:
+    /// `{"page": {...}, "running": {...}, "text": {...}, "styles": {...}}`; any part may be left out. Refused
+    /// settings change nothing.
     pub fn set_page(&mut self, json: &str) -> Result<(), String> {
         #[derive(serde::Deserialize)]
         struct Settings {
             page: Option<sfdoc_model::PageSetup>,
             running: Option<sfdoc_model::Running>,
+            text: Option<sfdoc_model::TextSetup>,
+            styles: Option<sfdoc_model::Styles>,
         }
         let s: Settings = serde_json::from_str(json).map_err(|e| format!("malformed page settings: {e}"))?;
-        let page = s.page.unwrap_or(self.doc.page);
-        let running = s.running.unwrap_or_else(|| self.doc.running.clone());
-        Document { version: self.doc.version, page, running: running.clone(), blocks: Vec::new() }
-            .validate()
-            .map_err(|e| e.to_string())?;
-        if page != self.doc.page || running != self.doc.running {
-            self.doc.page = page;
-            self.doc.running = running;
+        let next = Document {
+            version: self.doc.version,
+            page: s.page.unwrap_or(self.doc.page),
+            running: s.running.unwrap_or_else(|| self.doc.running.clone()),
+            text: s.text.unwrap_or(self.doc.text),
+            styles: s.styles.unwrap_or_else(|| self.doc.styles.clone()),
+            blocks: Vec::new(),
+        };
+        next.validate().map_err(|e| e.to_string())?;
+        let d = &self.doc;
+        if next.page != d.page || next.running != d.running || next.text != d.text || next.styles != d.styles {
+            self.doc.page = next.page;
+            self.doc.running = next.running;
+            self.doc.text = next.text;
+            self.doc.styles = next.styles;
             self.layout = None;
         }
         Ok(())
@@ -194,6 +204,22 @@ impl Engine {
         let Some(layout) = self.layout.as_ref() else { return Err("layout is missing".into()) };
         let page = layout.page(index, &self.fonts).ok_or_else(|| format!("page {index} of {}", layout.pages.len()))?;
         serde_json::to_string(&page).map_err(|e| e.to_string())
+    }
+
+    /// The display list of page `index` with the marks of what is typed but not printed (spaces, tabs, line
+    /// breaks, paragraph ends). For the screen: the PDF never has them.
+    pub fn page_marked(&mut self, index: usize) -> Result<String, String> {
+        self.ensure_layout()?;
+        let Some(layout) = self.layout.as_ref() else { return Err("layout is missing".into()) };
+        let page = layout
+            .page_with(index, &self.fonts, true)
+            .ok_or_else(|| format!("page {index} of {}", layout.pages.len()))?;
+        serde_json::to_string(&page).map_err(|e| e.to_string())
+    }
+
+    /// Table cells of a page as a flat list: `x, y, width, height` for every cell.
+    pub fn cell_rects(&mut self, page: usize) -> Result<Vec<f32>, String> {
+        Ok(self.ensure_layout()?.cell_rects(page).iter().flat_map(|r| [r.x, r.y, r.w, r.h]).collect())
     }
 
     /// Caret for a position: `[page, x, y, height]`, empty when the document has no place for a caret.
@@ -367,6 +393,38 @@ mod tests {
         // The refused settings changed nothing, and an edit keeps the settings.
         e.replace_blocks(0, 1, "[]").unwrap();
         assert!(e.page(0).unwrap().contains(r#""text":"Шапка""#));
+    }
+
+    #[test]
+    fn styles_hyphenation_marks_and_cells_reach_the_editor() {
+        let mut e = Engine::new();
+        e.add_font(font()).unwrap();
+        let long = "сортування ".repeat(40);
+        let doc = format!(
+            r#"{{"version":1,"blocks":[{{"type":"paragraph","inlines":[{{"type":"text","text":"{long}"}}]}},{{"type":"table","borders":"outer","rows":[{{"cells":[{{"blocks":[{{"type":"paragraph"}}]}},{{"blocks":[{{"type":"paragraph"}}]}}]}}]}}]}}"#
+        );
+        e.set_document(&doc).unwrap();
+        let plain = e.page(0).unwrap();
+        assert!(!plain.contains("-\""));
+        // Hyphenation and a smaller body font: both change the page, and both survive an edit.
+        e.set_page(r#"{"text":{"hyphenate":true},"styles":{"body":{"size":10}}}"#).unwrap();
+        let hyphenated = e.page(0).unwrap();
+        assert!(hyphenated.contains("-\"") && hyphenated.contains(r#""size":10.0"#), "{hyphenated}");
+        e.replace_blocks(1, 2, "[]").unwrap();
+        assert!(e.page(0).unwrap().contains("-\""));
+        assert!(e.set_page(r#"{"styles":{"body":{"size":-3}}}"#).is_err());
+        // A full document without settings of its own keeps none: the editor sets them again after it.
+        e.set_document(&doc).unwrap();
+        assert_eq!(e.page(0).unwrap(), plain);
+
+        // Two cells, four numbers each; marks only on request.
+        let cells = e.cell_rects(0).unwrap();
+        assert_eq!(cells.len(), 8);
+        assert!(cells[4] > cells[0] && cells[1] == cells[5]);
+        assert!(e.cell_rects(7).unwrap().is_empty());
+        assert!(!plain.contains('¶'));
+        assert!(e.page_marked(0).unwrap().contains('¶'));
+        assert_eq!(e.page_marked(9).unwrap_err(), "page 9 of 1");
     }
 
     #[test]

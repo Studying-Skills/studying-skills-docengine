@@ -33,7 +33,7 @@ fn heading(level: u8, s: &str) -> Block {
     Block::Paragraph(Paragraph { level, inlines: vec![t(s)], ..Default::default() })
 }
 fn leaf(kind: LeafKind, width: f32, height: f32) -> Block {
-    Block::Leaf(Leaf { kind, width, height, data: None, align: None, label: None })
+    Block::Leaf(Leaf { kind, width, height, data: None, align: None, label: None, list: None, wrap: false })
 }
 fn doc(blocks: Vec<Block>) -> Document {
     Document { blocks, ..Default::default() }
@@ -615,6 +615,7 @@ fn header_footer_and_page_number_skip_the_title_page() {
         footer: "Київ".into(),
         page_number: PageNumber::TopRight,
         title_page: true,
+        ..Default::default()
     };
     let l = lay(&d);
     assert_eq!(l.pages.len(), 3);
@@ -639,6 +640,7 @@ fn header_footer_and_page_number_skip_the_title_page() {
         footer: String::new(),
         page_number: PageNumber::BottomCenter,
         title_page: false,
+        ..Default::default()
     };
     let l = lay(&d);
     let n = &l.pages[0].running[0];
@@ -808,7 +810,7 @@ fn head(s: &str) -> Cell {
     Cell { header: true, ..cell(s) }
 }
 fn table(col_widths: Vec<f32>, rows: Vec<Vec<Cell>>) -> Block {
-    Block::Table(Table { col_widths, rows: rows.into_iter().map(|cells| Row { cells }).collect() })
+    Block::Table(Table { col_widths, borders: None, rows: rows.into_iter().map(|cells| Row { cells }).collect() })
 }
 fn boxes(l: &Layout) -> Vec<(usize, &PlacedBox)> {
     l.pages
@@ -822,8 +824,18 @@ fn boxes(l: &Layout) -> Vec<(usize, &PlacedBox)> {
 
 #[test]
 fn a_picture_stands_left_centred_or_right_and_a_formula_carries_its_number_at_the_right_edge() {
-    let pic =
-        |align| Block::Leaf(Leaf { kind: LeafKind::Image, width: 100.0, height: 50.0, data: None, align, label: None });
+    let pic = |align| {
+        Block::Leaf(Leaf {
+            kind: LeafKind::Image,
+            width: 100.0,
+            height: 50.0,
+            data: None,
+            align,
+            label: None,
+            list: None,
+            wrap: false,
+        })
+    };
     let formula = Block::Leaf(Leaf {
         kind: LeafKind::Math,
         width: 120.0,
@@ -831,6 +843,8 @@ fn a_picture_stands_left_centred_or_right_and_a_formula_carries_its_number_at_th
         data: None,
         align: None,
         label: Some("(12)".into()),
+        list: None,
+        wrap: false,
     });
     let d = doc(vec![pic(None), pic(Some(Align::Left)), pic(Some(Align::Right)), formula, para("Після.")]);
     let l = lay(&d);
@@ -1143,6 +1157,400 @@ fn pictures_lists_and_tables_live_inside_cells() {
     assert!(one.x > c[0].x + style::LIST_INDENT);
 }
 
+fn picture(w: f32, h: f32, align: Align, wrap: bool) -> Block {
+    Block::Leaf(Leaf {
+        kind: LeafKind::Image,
+        width: w,
+        height: h,
+        data: Some("p.png".into()),
+        align: Some(align),
+        label: None,
+        list: None,
+        wrap,
+    })
+}
+
+#[test]
+fn text_flows_beside_a_picture_and_goes_back_to_full_width_under_it() {
+    let d = doc(vec![para("Перед."), picture(150.0, 100.0, Align::Left, true), para(LOREM), para(LOREM)]);
+    let l = lay(&d);
+    let (_, pic) = boxes(&l)[0];
+    let ls = lines(&l);
+    // The picture stands at the left edge, level with the first line of the paragraph after it, and keeps its
+    // own position (the one before that paragraph).
+    assert!((pic.rect.x - LEFT).abs() < 0.01 && (pic.rect.y - ls[1].1.y).abs() < 0.01);
+    assert_eq!(pic.pos, 8);
+    let bottom = pic.rect.bottom();
+    let mut beside = 0;
+    for (_, pl) in &ls[1..] {
+        let left = pl.x + pl.line.x;
+        if pl.y < bottom {
+            // Beside the picture: the text starts right of it, a gap away, and still ends at the right margin.
+            assert!(left >= pic.rect.right() + 8.9, "line at {} starts at {left}", pl.y);
+            beside += 1;
+        } else {
+            assert!(left < LEFT + INDENT + 0.01);
+        }
+        assert!(pl.line.width <= TEXT_W + 0.02 - (left - LEFT));
+    }
+    // 100 pt of picture is four lines of 24.15 pt and a part of the fifth.
+    assert_eq!(beside, 5);
+    assert_eq!(ls[1..].iter().map(|(_, l)| line_text(l)).collect::<String>(), format!("{LOREM}{LOREM}"));
+    // A click on the picture answers with the picture, a click on the text beside it with the text.
+    assert_eq!(l.hit_test(0, LEFT + 20.0, pic.rect.y + 50.0), Some(8));
+    let hit = l.hit_test(0, LEFT + 300.0, pic.rect.y + 5.0).unwrap();
+    assert!(hit > 9 && hit < 60, "{hit}");
+
+    // On the right: the lines keep their left edge and end before the picture.
+    let d = doc(vec![picture(150.0, 60.0, Align::Right, true), para(LOREM)]);
+    let l = lay(&d);
+    let (_, pic) = boxes(&l)[0];
+    assert!((pic.rect.right() - (LEFT + TEXT_W)).abs() < 0.01);
+    for (_, pl) in lines(&l) {
+        let right = pl.x + pl.line.x + pl.line.width;
+        if pl.y < pic.rect.bottom() {
+            assert!(right <= pic.rect.x - 8.9, "line at {} ends at {right}", pl.y);
+        }
+    }
+}
+
+#[test]
+fn a_short_paragraph_beside_a_picture_hands_the_rest_of_it_to_the_next_and_a_table_starts_under_it() {
+    let short = "Короткий абзац.";
+    let d = doc(vec![picture(150.0, 100.0, Align::Left, true), para(short), para(LOREM)]);
+    let l = lay(&d);
+    let (_, pic) = boxes(&l)[0];
+    let ls = lines(&l);
+    // The second paragraph is still beside the picture for its first lines.
+    assert!(ls[1].1.y < pic.rect.bottom() && ls[1].1.x + ls[1].1.line.x >= pic.rect.right() + 8.9);
+    assert!(ls.last().unwrap().1.x + ls.last().unwrap().1.line.x < LEFT + 1.0);
+
+    // A table does not flow: it starts under the picture.
+    let d = doc(vec![
+        picture(150.0, 100.0, Align::Left, true),
+        para(short),
+        table(vec![], vec![vec![cell("а"), cell("б")]]),
+    ]);
+    let l = lay(&d);
+    let (_, pic) = boxes(&l)[0];
+    assert!(l.pages[0].cells[0].y >= pic.rect.bottom());
+
+    // No paragraph after it, too wide, or not asked to: an ordinary picture on its own line.
+    for blocks in [
+        vec![picture(150.0, 100.0, Align::Left, true), table(vec![], vec![vec![cell("а")]])],
+        vec![picture(400.0, 100.0, Align::Left, true), para(LOREM)],
+        vec![picture(150.0, 100.0, Align::Left, false), para(LOREM)],
+    ] {
+        let l = lay(&doc(blocks));
+        let (_, pic) = boxes(&l)[0];
+        let below = lines(&l).into_iter().map(|(_, pl)| pl.y).fold(f32::MAX, f32::min);
+        assert!(below >= pic.rect.bottom(), "{below} < {}", pic.rect.bottom());
+    }
+}
+
+#[test]
+fn a_picture_that_does_not_fit_moves_to_the_next_page_with_its_paragraph_and_edits_keep_the_layout_right() {
+    let mut blocks = filler(26);
+    blocks.push(picture(150.0, 200.0, Align::Right, true));
+    blocks.push(para(LOREM));
+    let d = doc(blocks);
+    let l = lay(&d);
+    let (page, pic) = boxes(&l)[0];
+    // 26 paragraphs leave less than 200 pt on the first page: the picture and its paragraph start the second.
+    assert_eq!(page, 1);
+    assert!(l.pages[1].entries.first().is_some_and(|e| matches!(e, Entry::Box(_))));
+    assert!((pic.rect.y - mm(20.0)).abs() < 0.01, "{}", pic.rect.y);
+    let first = lines(&l).into_iter().find(|(p, _)| *p == 1).unwrap().1;
+    assert_eq!(first.y, pic.rect.y);
+
+    // Through the cache: the paragraph beside the picture is laid out again when the picture changes or goes.
+    let f = fonts();
+    let mut lt = Layouter::new();
+    let mut d2 = d.clone();
+    lt.layout(&d2, &f).unwrap();
+    d2.replace_blocks(26, 27, vec![picture(100.0, 50.0, Align::Left, true)]).unwrap();
+    lt.replaced(26, 27, 1);
+    assert_eq!(lt.layout(&d2, &f).unwrap(), layout(&d2, &f).unwrap());
+    d2.replace_blocks(26, 27, vec![]).unwrap();
+    lt.replaced(26, 27, 0);
+    assert_eq!(lt.layout(&d2, &f).unwrap(), layout(&d2, &f).unwrap());
+}
+
+#[test]
+fn long_words_are_hyphenated_only_when_the_document_asks() {
+    let narrow = |hyphenate: bool| {
+        let mut d = doc(vec![Block::Paragraph(Paragraph {
+            props: ParaProps { indent_right: Some(TEXT_W - 150.0), indent_first: Some(0.0), ..Default::default() },
+            inlines: vec![t(LOREM)],
+            ..Default::default()
+        })]);
+        d.text.hyphenate = hyphenate;
+        lay(&d)
+    };
+    let (off, on) = (narrow(false), narrow(true));
+    let texts = |l: &Layout| lines(l).iter().map(|(_, pl)| line_text(pl)).collect::<Vec<_>>();
+    assert!(texts(&off).iter().all(|t| !t.ends_with('-')));
+    let hyphenated = texts(&on);
+    let broken = hyphenated.iter().filter(|t| t.ends_with('-')).count();
+    assert!(broken >= 3, "{hyphenated:?}");
+    assert!(hyphenated.len() < texts(&off).len());
+    // The hyphens are drawn only: without them the text is the paragraph's, and positions run on unbroken.
+    let joined: String = hyphenated.iter().map(|t| t.strip_suffix('-').unwrap_or(t)).collect();
+    assert_eq!(joined, LOREM);
+    let ls = lines(&on);
+    for pair in ls.windows(2) {
+        assert_eq!(pair[1].1.line.from, pair[0].1.line.to);
+    }
+    for (_, pl) in &ls {
+        assert!(pl.line.width <= 150.0 + 0.02, "{} is {} wide", line_text(pl), pl.line.width);
+    }
+    // The caret at the end of a hyphenated line stands before the hyphen.
+    let (_, first) = ls.iter().find(|(_, pl)| line_text(pl).ends_with('-')).unwrap();
+    let last = first.line.frags.last().unwrap();
+    assert!(*last.carets.last().unwrap() < last.advance - 2.0);
+    assert_eq!(last.carets.len() as u32, last.to - last.from + 1);
+}
+
+#[test]
+fn document_styles_change_the_defaults_and_a_paragraph_s_own_formatting_still_wins() {
+    let blocks = vec![
+        heading(1, "Розділ"),
+        para("Текст."),
+        Block::Paragraph(Paragraph {
+            props: ParaProps { style: Some("caption".into()), ..Default::default() },
+            inlines: vec![t("Рисунок 1 – Схема")],
+            ..Default::default()
+        }),
+        Block::Paragraph(Paragraph {
+            props: ParaProps { indent_first: Some(0.0), ..Default::default() },
+            inlines: vec![tm("Свій", Marks { size: Some(9.0), ..Default::default() })],
+            ..Default::default()
+        }),
+        table(vec![], vec![vec![cell("клітинка")]]),
+    ];
+    let mut d = doc(blocks);
+    let plain = lay(&d);
+    d.styles.insert(
+        "body".into(),
+        StyleDef {
+            font: Some("Arial".into()),
+            size: Some(12.0),
+            line_height: Some(1.0),
+            indent_first: Some(20.0),
+            ..Default::default()
+        },
+    );
+    d.styles.insert("h1".into(), StyleDef { size: Some(20.0), align: Some(Align::Center), ..Default::default() });
+    d.styles.insert(
+        "caption".into(),
+        StyleDef { align: Some(Align::Center), italic: Some(true), indent_first: Some(0.0), ..Default::default() },
+    );
+    let l = lay(&d);
+    let size_font = |pl: &PlacedLine| match &pl.line.frags[0].kind {
+        FragKind::Text(t) => (t.size, t.font.0),
+        _ => panic!("text expected"),
+    };
+    let ls = lines(&l);
+    // Fonts load as Serif regular 0, bold 1, italic 2, bold italic 3, Sans regular 4: with only the regular Sans
+    // loaded, bold and italic Arial fall back to it.
+    assert_eq!(size_font(ls[0].1), (20.0, 4));
+    assert!((ls[0].1.line.x + ls[0].1.line.width / 2.0 - TEXT_W / 2.0).abs() < 0.01);
+    assert_eq!(size_font(ls[1].1), (12.0, 4));
+    assert!((ls[1].1.line.x - 20.0).abs() < 0.01);
+    assert!(ls[1].1.line.height < 15.0);
+    // The caption: centred, the body font and size.
+    assert_eq!(size_font(ls[2].1).0, 12.0);
+    assert!((ls[2].1.line.x + ls[2].1.line.width / 2.0 - TEXT_W / 2.0).abs() < 0.01);
+    // What the paragraph states itself stays.
+    assert_eq!(size_font(ls[3].1).0, 9.0);
+    assert!(ls[3].1.line.x.abs() < 0.01);
+    // A cell takes the font and the size, not the indent.
+    assert_eq!(size_font(ls[4].1), (12.0, 4));
+    assert!(ls[4].1.line.x.abs() < 0.01);
+    assert_eq!(size_font(lines(&plain)[1].1), (14.0, 0));
+
+    // Changing a style lays every block out again, through the cache too.
+    let f = fonts();
+    let mut lt = Layouter::new();
+    lt.layout(&d, &f).unwrap();
+    d.styles.remove("body");
+    assert_eq!(lt.layout(&d, &f).unwrap(), layout(&d, &f).unwrap());
+    // A style with a size that is not a size is refused.
+    d.styles.insert("body".into(), StyleDef { size: Some(0.0), ..Default::default() });
+    assert!(matches!(layout(&d, &f), Err(LayoutError::Model(ModelError::Invalid(_)))));
+}
+
+#[test]
+fn even_pages_may_have_their_own_header_and_footer_and_a_watermark_lies_under_every_page() {
+    let mut d = doc(filler(70));
+    d.running = Running {
+        header: "Непарна".into(),
+        footer: "низ".into(),
+        page_number: PageNumber::None,
+        title_page: false,
+        header_even: Some("Парна".into()),
+        footer_even: Some(String::new()),
+        watermark: Some("ЧЕРНЕТКА".into()),
+    };
+    let l = lay(&d);
+    assert_eq!(l.pages.len(), 3);
+    assert_eq!(running_texts(&l, 0), vec!["Непарна", "низ"]);
+    assert_eq!(running_texts(&l, 1), vec!["Парна"]);
+    assert_eq!(running_texts(&l, 2), vec!["Непарна", "низ"]);
+    for (i, p) in l.pages.iter().enumerate() {
+        let mark = &p.under[0];
+        assert_eq!(line_text(mark), "ЧЕРНЕТКА");
+        // Centred on the page's text area and on its height, 85 % of the text area wide.
+        assert!((mark.x + mark.line.width / 2.0 - (LEFT + TEXT_W / 2.0)).abs() < 0.01);
+        assert!((mark.y + mark.line.height / 2.0 - 841.89 / 2.0).abs() < 0.01);
+        assert!((mark.line.width - TEXT_W * 0.85).abs() < 0.5, "{}", mark.line.width);
+        // Painted first, so the text is over it; and it holds no positions.
+        let display = l.page(i, &fonts()).unwrap();
+        assert!(matches!(&display.items[0], Item::Glyphs(g) if g.text == "ЧЕРНЕТКА" && g.color.r == 0xd9));
+    }
+    assert_ne!(l.fingerprint(0), {
+        d.running.watermark = None;
+        lay(&d).fingerprint(0)
+    });
+    // A very short watermark is not blown up beyond 144 pt.
+    d.running.watermark = Some("А".into());
+    let l = lay(&d);
+    assert!(matches!(&l.pages[0].under[0].line.frags[0].kind, FragKind::Text(t) if t.size == 144.0));
+}
+
+#[test]
+fn a_list_of_figures_shows_the_captions_of_its_list_with_their_pages() {
+    let caption = |list: &str, text: &str| {
+        Block::Paragraph(Paragraph {
+            props: ParaProps { entry_of: Some(list.into()), ..Default::default() },
+            inlines: vec![t(text)],
+            ..Default::default()
+        })
+    };
+    let list_of = |list: &str, title: &str| {
+        Block::Leaf(Leaf {
+            kind: LeafKind::Toc,
+            width: 0.0,
+            height: 0.0,
+            data: Some(title.into()),
+            align: None,
+            label: None,
+            list: Some(list.into()),
+            wrap: false,
+        })
+    };
+    let mut blocks = vec![toc("Зміст"), list_of("figure", "Рисунки"), list_of("table", "Таблиці")];
+    blocks.push(leaf(LeafKind::PageBreak, 0.0, 0.0));
+    blocks.push(heading(1, "Вступ"));
+    blocks.push(caption("figure", "Рисунок 1 – Схема"));
+    blocks.extend(filler(40));
+    blocks.push(caption("table", "Таблиця 1 – Час"));
+    blocks.push(caption("figure", "Рисунок 2 – Графік"));
+    let l = lay(&doc(blocks));
+    let rows = running_texts(&l, 0);
+    let text: Vec<&str> = rows.iter().map(String::as_str).filter(|r| !r.starts_with('.')).collect();
+    // The text of the three blocks in order, then the page numbers in the same order.
+    assert_eq!(
+        text,
+        [
+            "Зміст",
+            "Вступ",
+            "Рисунки",
+            "Рисунок 1 – Схема",
+            "Рисунок 2 – Графік",
+            "Таблиці",
+            "Таблиця 1 – Час",
+            "2",
+            "2",
+            "3",
+            "3"
+        ]
+    );
+}
+
+#[test]
+fn a_table_draws_all_its_lines_the_rows_only_its_frame_or_nothing() {
+    let lines_of = |borders: Option<Borders>| {
+        let rows = vec![vec![cell("а"), cell("б"), cell("в")], vec![cell("г"), cell("д"), cell("е")]];
+        let d = doc(vec![Block::Table(Table {
+            col_widths: vec![100.0, 100.0, 100.0],
+            borders,
+            rows: rows.into_iter().map(|cells| Row { cells }).collect(),
+        })]);
+        let l = lay(&d);
+        let decor = l.pages[0].decor.clone();
+        let (h, v): (Vec<_>, Vec<_>) = decor.into_iter().map(|(r, _)| r).partition(|r| r.w > r.h);
+        (h.len(), v.len(), l.pages[0].cells.len())
+    };
+    // Six cells: with every line each draws its four sides.
+    assert_eq!(lines_of(None), (12, 12, 6));
+    assert_eq!(lines_of(Some(Borders::All)), (12, 12, 6));
+    assert_eq!(lines_of(Some(Borders::Horizontal)), (12, 0, 6));
+    // The frame: three cells along the top, three along the bottom, two down each side.
+    assert_eq!(lines_of(Some(Borders::Outer)), (6, 4, 6));
+    assert_eq!(lines_of(Some(Borders::None)), (0, 0, 6));
+}
+
+#[test]
+fn a_table_inside_a_cell_taller_than_a_page_continues_row_by_row() {
+    let inner_rows: Vec<Vec<Cell>> = (0..60).map(|i| vec![cell(&format!("вкладений {i}")), cell("х")]).collect();
+    let inner = table(vec![150.0, 60.0], inner_rows);
+    let d = doc(vec![table(vec![250.0, 150.0], vec![vec![cell_of(vec![para("Перед."), inner]), cell("поруч")]])]);
+    let l = lay(&d);
+    assert!(l.pages.len() >= 2, "{} pages", l.pages.len());
+    let bottom = 841.89 - mm(20.0);
+    let texts: Vec<(usize, String)> =
+        lines(&l).iter().map(|(p, pl)| (*p, line_text(pl))).filter(|(_, t)| t.starts_with("вкладений ")).collect();
+    // Every row once, in order, the pages not going back; nothing below the bottom margin.
+    assert_eq!(
+        texts.iter().map(|(_, t)| t.clone()).collect::<Vec<_>>(),
+        (0..60).map(|i| format!("вкладений {i}")).collect::<Vec<_>>()
+    );
+    assert!(texts.windows(2).all(|w| w[0].0 <= w[1].0));
+    assert!(texts.first().unwrap().0 == 0 && texts.last().unwrap().0 == l.pages.len() - 1);
+    assert!(lines(&l).iter().all(|(_, pl)| pl.y + pl.line.height <= bottom + 0.05));
+    for p in &l.pages {
+        assert!(p.cells.iter().all(|c| c.bottom() <= bottom + 0.05), "a cell hangs below the page");
+    }
+}
+
+#[test]
+fn marks_of_what_is_not_printed_are_drawn_only_when_asked() {
+    let d = doc(vec![
+        para_of(vec![
+            t("Два слова\tпісля"),
+            Inline::Atom(Atom { kind: AtomKind::Break, width: 0.0, height: 0.0, depth: 0.0, data: None }),
+            t("другий\u{a0}рядок"),
+        ]),
+        para(""),
+    ]);
+    let l = lay(&d);
+    let f = fonts();
+    let plain = l.page(0, &f).unwrap();
+    let marked = l.page_with(0, &f, true).unwrap();
+    let glyphs = |p: &Page| {
+        p.items
+            .iter()
+            .filter_map(|i| if let Item::Glyphs(g) = i { Some(g.text.clone()) } else { None })
+            .collect::<Vec<_>>()
+    };
+    let dots = |p: &Page| {
+        p.items.iter().filter(|i| matches!(i, Item::Rect { rect, .. } if rect.w < 3.0 && rect.h < 3.0)).count()
+    };
+    assert!(!glyphs(&plain).iter().any(|t| t == "¶" || t == "→"));
+    assert_eq!(dots(&plain), 0);
+    let g = glyphs(&marked);
+    // Two paragraphs end; one tab; one forced break (an arrow, or the paragraph mark when the font has no arrow).
+    assert_eq!(g.iter().filter(|t| *t == "→").count(), 1);
+    assert_eq!(g.iter().filter(|t| *t == "¶" || *t == "↵").count(), 3);
+    // One ordinary space and one non-breaking space.
+    assert_eq!(dots(&marked), 2);
+    // The marks change nothing else: the same text, the same places.
+    let text = |p: &Page| glyphs(p).into_iter().filter(|t| !matches!(t.as_str(), "¶" | "→" | "↵")).collect::<Vec<_>>();
+    assert_eq!(text(&plain), text(&marked));
+    assert_eq!(l.cell_rects(0).len(), 0);
+}
+
 fn note(text: &str) -> Inline {
     Inline::Atom(Atom { kind: AtomKind::Footnote, width: 0.0, height: 0.0, depth: 0.0, data: Some(text.into()) })
 }
@@ -1239,6 +1647,8 @@ fn toc(title: &str) -> Block {
         data: (!title.is_empty()).then(|| title.to_owned()),
         align: None,
         label: None,
+        list: None,
+        wrap: false,
     })
 }
 
@@ -1368,11 +1778,19 @@ fn arb_block() -> impl Strategy<Value = Block> {
             height: 0.0,
             data: Some("Зміст".into()),
             align: None,
-            label: None
+            label: None,
+            list: None,
+            wrap: false
         })),
         (20.0f32..700.0, 20.0f32..900.0).prop_map(|(w, h)| leaf(LeafKind::Image, w, h)),
+        (40.0f32..260.0, 30.0f32..400.0, any::<bool>()).prop_map(|(w, h, right)| picture(
+            w,
+            h,
+            if right { Align::Right } else { Align::Left },
+            true
+        )),
     ];
-    prop_oneof![8 => p, 2 => l].prop_recursive(2, 12, 3, |inner| {
+    prop_oneof![8 => p, 3 => l].prop_recursive(2, 12, 3, |inner| {
         prop_oneof![
             proptest::collection::vec(inner.clone(), 1..3).prop_map(|blocks| Block::Quote(Quote { blocks })),
             (any::<bool>(), proptest::collection::vec(proptest::collection::vec(inner.clone(), 1..3), 1..4)).prop_map(
@@ -1389,6 +1807,7 @@ fn arb_block() -> impl Strategy<Value = Block> {
                 .prop_map(|rows| {
                     Block::Table(Table {
                         col_widths: vec![],
+                        borders: None,
                         rows: rows
                             .into_iter()
                             .map(|cells| Row {
@@ -1443,16 +1862,24 @@ proptest! {
                 // Entries of one region (the page body, or one table cell) go down the page in order, and all stay
                 // inside the text area unless taller than a page.
                 let mut last: std::collections::HashMap<u16, f32> = std::collections::HashMap::new();
-                for e in &page.entries {
+                for (ei, e) in page.entries.iter().enumerate() {
                     let y = last.get(&e.region()).copied().unwrap_or(d.page.margin_top - 0.01);
-                    prop_assert!(e.top() >= y - 0.01, "page {} entry at {} above {}", pi, e.top(), y);
+                    // A page break after a line whose leading hangs into the bottom margin is marked at the bottom of the
+                    // text area, a little above that line's box.
+                    let page_break = matches!(e, Entry::Box(b) if b.kind == LeafKind::PageBreak);
+                    prop_assert!(page_break || e.top() >= y - 0.01, "page {} entry at {} above {}", pi, e.top(), y);
                     prop_assert!(e.top() >= d.page.margin_top - 0.01, "page {} entry at {} above the text area", pi, e.top());
-                    last.insert(e.region(), e.bottom());
+                    // A picture the text flows around stands beside the lines after it, not above them: the next
+                    // entry is a line with the same top.
+                    let floats = matches!(e, Entry::Box(b) if b.kind == LeafKind::Image)
+                        && matches!(page.entries.get(ei + 1), Some(Entry::Line(next)) if next.y == e.top());
+                    last.insert(e.region(), if floats { e.top() } else { e.bottom() });
                     if e.region() != 0 {
                         let cell = page.cells[usize::from(e.region()) - 1];
                         prop_assert!(e.top() >= cell.y - 0.01 && e.bottom() <= cell.bottom() + 0.05, "page {pi}: entry {}..{} outside its cell {cell:?}", e.top(), e.bottom());
                     }
-                    // Known limit: a table inside a cell is never split, so one taller than a page runs past the bottom.
+                    // Known limit: rows of a table inside a cell stay whole, so a nested row taller than what is left of
+                    // the page runs past the bottom.
                     let nested = e.region() != 0 && {
                         let own = page.cells[usize::from(e.region()) - 1];
                         page.cells.iter().take(usize::from(e.region()) - 1).any(|o| o.x <= own.x && o.right() >= own.right() - 0.01 && o.y <= own.y && o.h > own.h)

@@ -49,14 +49,63 @@ pub struct Document {
     pub page: PageSetup,
     #[serde(default, skip_serializing_if = "is_default")]
     pub running: Running,
+    /// Document-wide text settings.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub text: TextSetup,
+    /// What the built-in paragraph styles look like in this document, by name: `body`, `h1`…`h6`, `code`, and any
+    /// name a paragraph states in its `style`. A style that is absent keeps the engine's defaults.
+    #[serde(default, skip_serializing_if = "Styles::is_empty")]
+    pub styles: Styles,
     #[serde(default)]
     pub blocks: Vec<Block>,
 }
 
 impl Default for Document {
     fn default() -> Self {
-        Self { version: FORMAT_VERSION, page: PageSetup::default(), running: Running::default(), blocks: Vec::new() }
+        Self {
+            version: FORMAT_VERSION,
+            page: PageSetup::default(),
+            running: Running::default(),
+            text: TextSetup::default(),
+            styles: Styles::new(),
+            blocks: Vec::new(),
+        }
     }
+}
+
+pub type Styles = std::collections::BTreeMap<String, StyleDef>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TextSetup {
+    /// Break long words at the ends of lines (Cyrillic words, by syllable rules).
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub hyphenate: bool,
+}
+
+/// What a named style changes in the engine's defaults for its kind of paragraph. `None` leaves the default.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StyleDef {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    /// Font size in points.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bold: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub italic: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<Align>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub indent_first: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_before: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space_after: Option<f32>,
 }
 
 /// Where the page number goes.
@@ -82,11 +131,27 @@ pub struct Running {
     /// The first page is a title page: no header, footer or number on it (it still counts as page 1).
     #[serde(default = "yes")]
     pub title_page: bool,
+    /// Header and footer of even pages, when they differ from the odd ones.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub header_even: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub footer_even: Option<String>,
+    /// Pale text across the middle of every page, under the content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub watermark: Option<String>,
 }
 
 impl Default for Running {
     fn default() -> Self {
-        Self { header: String::new(), footer: String::new(), page_number: PageNumber::TopRight, title_page: true }
+        Self {
+            header: String::new(),
+            footer: String::new(),
+            page_number: PageNumber::TopRight,
+            title_page: true,
+            header_even: None,
+            footer_even: None,
+            watermark: None,
+        }
     }
 }
 
@@ -176,6 +241,10 @@ pub struct ParaProps {
     pub space_after: Option<f32>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub keep_next: bool,
+    /// The paragraph is an entry of the named list (`figure`, `table`): a contents block with the same `list`
+    /// shows it with its page number. Headings are entries of the table of contents without saying so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub entry_of: Option<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub keep_lines: bool,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -299,7 +368,22 @@ pub struct Table {
     /// Column widths in points; empty = size the columns by content.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub col_widths: Vec<f32>,
+    /// Which grid lines are drawn; all of them when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub borders: Option<Borders>,
     pub rows: Vec<Row>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Borders {
+    #[default]
+    All,
+    /// Lines between the rows, above the first and under the last; no vertical lines.
+    Horizontal,
+    /// The frame around the table only.
+    Outer,
+    None,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -357,6 +441,12 @@ pub struct Leaf {
     /// Text set at the right edge of the text area, level with the middle of the box: an equation number "(3)".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// For a contents block: the list it shows (see `ParaProps::entry_of`); the headings when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<String>,
+    /// A picture aligned left or right lets the paragraphs after it flow beside it.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub wrap: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -417,6 +507,14 @@ impl Document {
         let lens = [p.width, p.height, p.margin_top, p.margin_right, p.margin_bottom, p.margin_left];
         if lens.iter().any(|v| !v.is_finite() || *v < 0.0) || p.width <= 0.0 || p.height <= 0.0 {
             return Err(ModelError::Invalid("page size and margins must be finite and not negative".into()));
+        }
+        for s in self.styles.values() {
+            let lens = [s.indent_first, s.space_before, s.space_after];
+            if lens.iter().flatten().any(|v| !v.is_finite())
+                || [s.size, s.line_height].iter().flatten().any(|v| !v.is_finite() || *v <= 0.0)
+            {
+                return Err(ModelError::Invalid("style sizes and spacing must be finite, sizes positive".into()));
+            }
         }
         validate_blocks(&self.blocks, 0)
     }

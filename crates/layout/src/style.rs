@@ -3,7 +3,7 @@
 
 use sfdoc_fonts::{FontId, FontSet};
 use sfdoc_geom::cm;
-use sfdoc_model::{Align, Color, Marks, ParaProps, Paragraph, VertAlign};
+use sfdoc_model::{Align, Color, Marks, ParaProps, Paragraph, StyleDef, Styles, VertAlign};
 
 /// Default tab stop and paragraph first-line indent: 1.25 cm.
 pub const TAB: f32 = 35.433_07;
@@ -36,7 +36,7 @@ pub enum Context {
 /// Character formatting a paragraph's text starts from.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextDefaults {
-    pub family: &'static str,
+    pub family: String,
     pub size: f32,
     pub bold: bool,
     pub italic: bool,
@@ -59,9 +59,86 @@ pub struct ParaStyle {
     pub text: TextDefaults,
 }
 
-/// The formatting of `p` in `ctx`: defaults for its kind, overridden by what the paragraph states itself.
-pub fn para_style(p: &Paragraph, ctx: Context) -> ParaStyle {
-    let body = TextDefaults { family: BODY_FONT, size: BODY_SIZE, bold: false, italic: false };
+impl ParaStyle {
+    /// A paragraph without indents or spacing: what the engine sets its own lines in (contents rows, page
+    /// numbers, labels).
+    pub fn plain(align: Align, line_mult: f32, family: &str, size: f32, bold: bool) -> Self {
+        Self {
+            align,
+            line_mult,
+            left: 0.0,
+            right: 0.0,
+            first: 0.0,
+            space_before: 0.0,
+            space_after: 0.0,
+            keep_next: false,
+            keep_lines: false,
+            page_break_before: false,
+            code: false,
+            text: TextDefaults { family: family.to_owned(), size, bold, italic: false },
+        }
+    }
+}
+
+/// The body font of a document: its `body` style's, or the engine's default.
+pub fn body_font(styles: &Styles) -> &str {
+    styles.get("body").and_then(|s| s.font.as_deref()).unwrap_or(BODY_FONT)
+}
+
+/// Which parts of a style definition a paragraph takes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Take {
+    /// The font family only.
+    Font,
+    /// The font and its size.
+    FontSize,
+    /// Everything but the first-line indent.
+    NoIndent,
+    All,
+}
+
+fn apply_def(s: &mut ParaStyle, d: &StyleDef, take: Take) {
+    if let Some(f) = &d.font {
+        s.text.family.clone_from(f);
+    }
+    if take == Take::Font {
+        return;
+    }
+    if let Some(v) = d.size {
+        s.text.size = v;
+    }
+    if take == Take::FontSize {
+        return;
+    }
+    if let Some(v) = d.bold {
+        s.text.bold = v;
+    }
+    if let Some(v) = d.italic {
+        s.text.italic = v;
+    }
+    if let Some(v) = d.align {
+        s.align = v;
+    }
+    if let Some(v) = d.line_height {
+        s.line_mult = v;
+    }
+    if let Some(v) = d.space_before {
+        s.space_before = v.max(0.0);
+    }
+    if let Some(v) = d.space_after {
+        s.space_after = v.max(0.0);
+    }
+    if take == Take::All
+        && let Some(v) = d.indent_first
+    {
+        s.first = v;
+    }
+}
+
+/// The formatting of `p` in `ctx`: defaults for its kind, changed by the document's styles, overridden by what
+/// the paragraph states itself.
+pub fn para_style(p: &Paragraph, ctx: Context, styles: &Styles) -> ParaStyle {
+    let body = TextDefaults { family: BODY_FONT.to_owned(), size: BODY_SIZE, bold: false, italic: false };
     let mut s = ParaStyle {
         align: Align::Justify,
         line_mult: 1.5,
@@ -91,6 +168,17 @@ pub fn para_style(p: &Paragraph, ctx: Context) -> ParaStyle {
             s.text.size = 10.0;
         }
     }
+    // The body style: its font is the document's font everywhere; the rest is for body text where it flows.
+    if let Some(d) = styles.get("body") {
+        let take = match ctx {
+            _ if p.level > 0 => Take::Font,
+            Context::Body => Take::All,
+            Context::ListItem | Context::Quote => Take::NoIndent,
+            Context::Cell { .. } => Take::FontSize,
+            Context::Footnote => Take::Font,
+        };
+        apply_def(&mut s, d, take);
+    }
     match p.level {
         0 => {}
         level => {
@@ -104,10 +192,13 @@ pub fn para_style(p: &Paragraph, ctx: Context) -> ParaStyle {
                 3 => (14.0, true, true, 6.0, 3.0, Align::Left),
                 _ => (14.0, false, true, 0.0, 0.0, Align::Justify),
             };
-            s.text = TextDefaults { family: BODY_FONT, size, bold, italic };
+            s.text = TextDefaults { family: std::mem::take(&mut s.text.family), size, bold, italic };
             s.space_before = before;
             s.space_after = after;
             s.align = align;
+            if let Some(d) = styles.get(&format!("h{level}")) {
+                apply_def(&mut s, d, Take::All);
+            }
         }
     }
     if p.props.code {
@@ -115,7 +206,15 @@ pub fn para_style(p: &Paragraph, ctx: Context) -> ParaStyle {
         s.first = 0.0;
         s.align = Align::Left;
         s.line_mult = 1.0;
-        s.text = TextDefaults { family: CODE_FONT, size: CODE_SIZE, bold: false, italic: false };
+        s.text = TextDefaults { family: CODE_FONT.to_owned(), size: CODE_SIZE, bold: false, italic: false };
+        if let Some(d) = styles.get("code") {
+            apply_def(&mut s, d, Take::All);
+        }
+    } else if p.level == 0
+        && let Some(d) = p.props.style.as_deref().and_then(|name| styles.get(name))
+    {
+        // A style the paragraph names itself (a caption).
+        apply_def(&mut s, d, Take::All);
     }
     apply_props(&mut s, &p.props);
     s
@@ -168,7 +267,7 @@ pub struct RunStyle {
 /// The look of text with `marks` inside a paragraph whose text starts from `base`.
 /// `None` only when no fonts are loaded.
 pub fn run_style(marks: &Marks, base: &TextDefaults, fonts: &FontSet) -> Option<RunStyle> {
-    let family = marks.font.as_deref().unwrap_or(if marks.code { CODE_FONT } else { base.family });
+    let family = marks.font.as_deref().unwrap_or(if marks.code { CODE_FONT } else { &base.family });
     let bold = base.bold || marks.bold;
     let italic = base.italic || marks.italic;
     let full =

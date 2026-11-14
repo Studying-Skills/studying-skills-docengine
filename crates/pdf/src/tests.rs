@@ -63,6 +63,8 @@ fn a_missing_picture_is_reported_and_does_not_stop_the_export() {
         data: Some("figs/a.png".into()),
         align: None,
         label: None,
+        list: None,
+        wrap: false,
     });
     let doc = Document { blocks: vec![para("до"), image.clone(), image], ..Default::default() };
     let layout = sfdoc_layout::layout(&doc, &f).unwrap();
