@@ -1,0 +1,73 @@
+name: publish
+# A version tag (v0.1.0) builds both wasm modules and publishes two packages with one shared version to the
+# organisation's GitHub Packages registry, with the workflow's own GITHUB_TOKEN.
+# A pull request touching packaging, and a manual run, build and pack both packages without publishing (dry run).
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/publish.yml"
+      - "npm/**"
+      - "scripts/pack-npm.sh"
+      - "LICENSE"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: version
+        id: version
+        run: |
+          cargo_v="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            v="${GITHUB_REF_NAME#v}"
+            [ "$v" = "$cargo_v" ] || { echo "tag $GITHUB_REF_NAME differs from the workspace version $cargo_v in Cargo.toml" >&2; exit 1; }
+          else
+            v="$cargo_v"
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: wasm-pack
+        run: curl -sSfL https://github.com/wasm-bindgen/wasm-pack/releases/download/v0.15.1/wasm-pack-v0.15.1-x86_64-unknown-linux-musl.tar.gz | tar xz --strip-components=1 -C ~/.cargo/bin --wildcards '*/wasm-pack'
+      - name: layout engine wasm
+        run: wasm-pack build crates/wasm --release --target web --no-pack
+      - name: speller wasm
+        run: wasm-pack build crates/spell-wasm --release --target web --no-pack
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@studying-skills"
+      - name: assemble packages
+        run: scripts/pack-npm.sh "${{ steps.version.outputs.version }}"
+      - name: dry run (pack without publishing)
+        run: |
+          for p in docengine spellengine; do
+            (cd "dist/npm/$p" && npm pack --dry-run)
+          done
+      - name: tarballs
+        run: |
+          mkdir -p dist/tarballs
+          for p in docengine spellengine; do
+            (cd "dist/npm/$p" && npm pack --pack-destination ../../tarballs)
+          done
+      - name: publish both packages
+        # Only a version tag publishes; everything else stops at the dry run above.
+        # No artifact hand-off between jobs: the org's artifact storage quota is exhausted.
+        if: github.ref_type == 'tag'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          for t in dist/tarballs/*.tgz; do
+            npm publish "$t"
+          done
