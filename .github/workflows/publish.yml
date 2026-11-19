@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - name: version
@@ -44,6 +45,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          registry-url: https://npm.pkg.github.com
+          scope: "@studying-skills"
       - name: assemble packages
         run: scripts/pack-npm.sh "${{ steps.version.outputs.version }}"
       - name: dry run (pack without publishing)
@@ -57,36 +60,14 @@ jobs:
           for p in docengine spellengine; do
             (cd "dist/npm/$p" && npm pack --pack-destination ../../tarballs)
           done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: npm-packages
-          path: dist/tarballs/*.tgz
-          if-no-files-found: error
-
-  publish:
-    # Only a version tag publishes; the tarballs were packed and checked by the build job above.
-    if: github.ref_type == 'tag'
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: npm-packages
-          path: tarballs
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          registry-url: https://npm.pkg.github.com
-          scope: "@studying-skills"
       - name: publish both packages
+        # Only a version tag publishes; everything else stops at the dry run above.
+        # No artifact hand-off between jobs: the org's artifact storage quota is exhausted.
+        if: github.ref_type == 'tag'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          ls tarballs
-          for t in tarballs/*.tgz; do
+          for t in dist/tarballs/*.tgz; do
             npm publish "$t"
           done
