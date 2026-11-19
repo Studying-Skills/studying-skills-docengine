@@ -1,0 +1,34 @@
+{
+  "name": "@studying-skills/spellengine",
+  "version": "0.1.0",
+  "description": "StudyFlow speller (Rust compiled to WebAssembly): words of a paragraph against Hunspell dictionaries",
+  "license": "MIT",
+  "type": "module",
+  "main": "sfdoc_spell_wasm.js",
+  "module": "sfdoc_spell_wasm.js",
+  "types": "sfdoc_spell_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./sfdoc_spell_wasm.d.ts",
+      "default": "./sfdoc_spell_wasm.js"
+    },
+    "./sfdoc_spell_wasm_bg.wasm": "./sfdoc_spell_wasm_bg.wasm"
+  },
+  "files": [
+    "sfdoc_spell_wasm.js",
+    "sfdoc_spell_wasm.d.ts",
+    "sfdoc_spell_wasm_bg.wasm",
+    "sfdoc_spell_wasm_bg.wasm.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Studying-Skills/studying-skills-docengine.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  }
+}

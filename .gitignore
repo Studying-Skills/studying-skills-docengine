@@ -5,3 +5,4 @@ shots/
 *.pdf
 bundle.js
 results*.json
+dist/

@@ -1,0 +1,34 @@
+{
+  "name": "@studying-skills/docengine",
+  "version": "0.1.0",
+  "description": "StudyFlow document layout engine (Rust compiled to WebAssembly): document to lines, pages, display list and PDF",
+  "license": "MIT",
+  "type": "module",
+  "main": "sfdoc_wasm.js",
+  "module": "sfdoc_wasm.js",
+  "types": "sfdoc_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./sfdoc_wasm.d.ts",
+      "default": "./sfdoc_wasm.js"
+    },
+    "./sfdoc_wasm_bg.wasm": "./sfdoc_wasm_bg.wasm"
+  },
+  "files": [
+    "sfdoc_wasm.js",
+    "sfdoc_wasm.d.ts",
+    "sfdoc_wasm_bg.wasm",
+    "sfdoc_wasm_bg.wasm.d.ts",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Studying-Skills/studying-skills-docengine.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  }
+}
