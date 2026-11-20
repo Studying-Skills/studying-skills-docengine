@@ -19,7 +19,7 @@ const LAYERS: &[(&str, u8)] = &[
     ("sfdoc-spell-wasm", 4),
 ];
 
-/// Size budget of the release wasm, gzip-compressed (plan, section 8).
+/// Size budget of the release wasm, gzip-compressed.
 const WASM_GZIP_BUDGET: u64 = 1_500_000;
 
 fn layers() -> Result<String, String> {
