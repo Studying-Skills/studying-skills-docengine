@@ -31,10 +31,35 @@ insta = { version = "1", features = ["json"] }
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
+# Plain `cargo clippy --workspace --all-targets` is the pedantic scan. The allows below are decided style
+# lints (each with its reason); a cast or comparison that is bounded on purpose is marked at its own site
+# with `#[expect(..., reason = "...")]` instead, so a new unchecked one still shows up.
+pedantic = { level = "warn", priority = -1 }
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
 indexing_slicing = "warn"
+cast_precision_loss = "allow"            # geometry is f32 by design; the counts converted stay far below 2^24
+must_use_candidate = "allow"             # internal crates (publish = false); #[must_use] is lost at the JS boundary
+missing_errors_doc = "allow"             # errors are self-describing enums, or a message string for JS
+many_single_char_names = "allow"         # geometry and PDF path math use the names of the formulas
+assert_is_empty = "allow"                # test style
+struct_excessive_bools = "allow"         # independent formatting flags; an enum or bitset would not be clearer
+too_many_lines = "allow"                 # core algorithms; splitting them is a refactor, not a lint fix
+doc_markdown = "allow"                   # style preference, no behaviour impact
+default_trait_access = "allow"           # `Default::default()` in struct updates is the repo's style
+items_after_statements = "allow"         # local helpers sit next to their use
+redundant_closure_for_method_calls = "allow" # readability preference
+match_same_arms = "allow"                # separate arms keep each case documented on its own
+struct_field_names = "allow"             # field names follow the document format
+return_self_not_must_use = "allow"       # builder-style helpers; same reason as must_use_candidate
+single_match_else = "allow"              # readability preference
+match_wildcard_for_single_variants = "allow" # a wildcard keeps matches open to new variants
+manual_midpoint = "allow"                # `(a + b) / 2.0` reads like the formula it implements
+manual_assert_eq = "allow"               # test style
+semicolon_if_nothing_returned = "allow"  # style preference
+trivially_copy_pass_by_ref = "allow"     # serde's skip_serializing_if passes `&T`, so these must take a reference
+option_option = "allow"                  # three states on purpose (unparsable, none, a value)
 
 [profile.release]
 opt-level = 3

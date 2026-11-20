@@ -10,12 +10,8 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# wasm-bindgen expands to code with `unsafe`, so this crate cannot take the workspace's `forbid(unsafe_code)`.
-# It holds no logic of its own: every function forwards to `sfdoc_spell::Speller`.
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
+[lints]
+workspace = true
 
 [dependencies]
 sfdoc-spell = { workspace = true }

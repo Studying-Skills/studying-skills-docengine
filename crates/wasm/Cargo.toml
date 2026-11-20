@@ -10,12 +10,8 @@ publish.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-# wasm-bindgen expands to code with `unsafe`, so this crate cannot take the workspace's `forbid(unsafe_code)`.
-# It holds no logic of its own: every function forwards to `Engine` in `engine.rs`, which is plain safe Rust.
-[lints.clippy]
-unwrap_used = "deny"
-expect_used = "deny"
-panic = "deny"
+[lints]
+workspace = true
 
 [dependencies]
 sfdoc-geom = { workspace = true }
