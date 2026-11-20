@@ -108,7 +108,7 @@ impl Layouter {
         let width = (doc.page.width - doc.page.margin_left - doc.page.margin_right).max(1.0);
         let page_height = (doc.page.height - doc.page.margin_top - doc.page.margin_bottom).max(1.0);
         // Styles and hyphenation change every block; the page height decides which pictures may float.
-        if self.styles != doc.styles || self.text != doc.text || self.page_height != page_height {
+        if self.styles != doc.styles || self.text != doc.text || !same_length(self.page_height, page_height) {
             self.cache.clear();
             self.styles.clone_from(&doc.styles);
             self.text = doc.text;
@@ -150,7 +150,7 @@ impl Layouter {
             // A cached result holds while the width is the same and, if the block numbers footnotes, while the
             // number of footnotes before it is the same; and while the same picture stands beside it.
             let valid = slot.as_ref().is_some_and(|f| {
-                f.width == width
+                same_length(f.width, width)
                     && (f.footnotes == 0 || f.footnote_base == footnotes)
                     && f.toc_key.is_none_or(|k| k == toc_key)
                     && f.floated == float.is_some()
@@ -176,6 +176,12 @@ impl Layouter {
         flow::add_running(&mut pages, &doc.page, &doc.running, font, &sh).ok_or(LayoutError::NoFonts)?;
         Ok(Layout { page: doc.page, pages, content_size: pos })
     }
+}
+
+/// Exact comparison of two lengths used as cache keys: an epsilon would reuse a layout for a different width.
+#[expect(clippy::float_cmp, reason = "cache keys must match exactly")]
+fn same_length(a: f32, b: f32) -> bool {
+    a == b
 }
 
 /// Lay the whole document out from scratch.

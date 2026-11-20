@@ -165,6 +165,9 @@ const NOTE_RULE_OFFSET: f32 = 6.0;
 const TOC_NUMBER_COLUMN: f32 = 28.0;
 const TOC_LEVEL_INDENT: f32 = 35.433_07;
 const TOC_GAP: f32 = 4.0;
+/// Most dots in one table-of-contents leader. A leader this long is about 35,000 pt wide, far beyond any page the
+/// engine can render; the cap only keeps a finite but absurd page width from asking for a huge allocation.
+const MAX_LEADER_DOTS: f32 = 10_000.0;
 
 /// Cell padding left and right (Word's default 0.19 cm) and above and below the content.
 pub const CELL_PAD_X: f32 = 5.4;
@@ -355,6 +358,7 @@ fn roman(mut n: u32) -> String {
 }
 
 /// Bijective base-N numbering with the given letters: a, b, …, z, aa, ab, …
+#[expect(clippy::cast_possible_truncation, reason = "a numbering alphabet has a handful of letters")]
 fn alphabetic(mut n: u32, letters: &[char]) -> String {
     let base = letters.len() as u32;
     let mut out = Vec::new();
@@ -607,6 +611,10 @@ impl Flattener<'_, '_> {
                     let mut at = pos + 1;
                     let (ix, iw) = (x + LIST_INDENT, (width - LIST_INDENT).max(1.0));
                     for (i, item) in list.items.iter().enumerate() {
+                        #[expect(
+                            clippy::cast_possible_truncation,
+                            reason = "a list never has anywhere near u32::MAX items"
+                        )]
                         let m = list_marker(list, list.start.saturating_add(i as u32));
                         self.blocks(&item.blocks, Context::ListItem, ix, iw, at + 1, Some(&m))?;
                         at += 2 + item.blocks.iter().map(Block::size).sum::<u32>();
@@ -1310,6 +1318,10 @@ fn cell_rect(t: &TableFlow, c: &CellFlow, left: f32, y: f32, h: f32) -> Rect {
     Rect::new(left + t.x + x0, y, (x1 - x0).max(0.0), h)
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "page.cells is checked just above: it holds fewer than u16::MAX entries"
+)]
 fn open_region(rect: Rect, ghost: bool, page: &mut PageLayout) -> u16 {
     if ghost || page.cells.len() >= usize::from(u16::MAX) - 1 {
         return 0;
@@ -1854,10 +1866,16 @@ pub fn finish(
             let num_left = m.width - num.width;
             // Dots from the end of the text to the number, ending flush before it.
             let room = num_left - TOC_GAP - (m.text_end + TOC_GAP);
-            let count = (room / dot).floor();
+            let count = (room / dot).floor().min(MAX_LEADER_DOTS);
             if count >= 3.0 {
                 let from = num_left - TOC_GAP - count * dot;
-                if let Some(dots) = line_of(&".".repeat(count as usize), &style(Align::Left, from), 1.0e4)? {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "count is at least 3.0 and at most MAX_LEADER_DOTS"
+                )]
+                let dots = ".".repeat(count as usize);
+                if let Some(dots) = line_of(&dots, &style(Align::Left, from), 1.0e4)? {
                     p.running.push(PlacedLine {
                         line: Arc::new(dots),
                         x: m.x,

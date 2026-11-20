@@ -278,6 +278,7 @@ impl Speller {
         if self.dicts.is_empty() {
             return out;
         }
+        #[expect(clippy::cast_possible_truncation, reason = "a text of u32::MAX UTF-16 units is beyond any document")]
         let chars: Vec<(u32, char)> = text
             .chars()
             .scan(0u32, |at, c| {
@@ -286,6 +287,7 @@ impl Speller {
                 Some((start, c))
             })
             .collect();
+        #[expect(clippy::cast_possible_truncation, reason = "a text of u32::MAX UTF-16 units is beyond any document")]
         let end_of = |i: usize| chars.get(i).map_or(text.encode_utf16().count() as u32, |&(at, _)| at);
         let ch = |i: usize| chars.get(i).map(|&(_, c)| c);
         let mut i = 0;

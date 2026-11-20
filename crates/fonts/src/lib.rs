@@ -293,6 +293,7 @@ impl FontSet {
 
     /// Register a face. The first family added becomes the default for unknown names.
     pub fn add(&mut self, family: &str, bold: bool, italic: bool, font: Font) -> FontId {
+        #[expect(clippy::cast_possible_truncation, reason = "the font count stays far below u32::MAX")]
         let id = FontId(self.fonts.len() as u32);
         self.fonts.push(font);
         let k = key(family);

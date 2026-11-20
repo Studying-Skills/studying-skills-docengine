@@ -41,6 +41,7 @@ fn line_x(l: &PlacedLine, off: u32) -> f32 {
 }
 
 /// Paragraph offset on a placed line nearest to page x.
+#[expect(clippy::cast_possible_truncation, reason = "the carets of one fragment are far below u32::MAX")]
 fn line_offset_at(l: &PlacedLine, x: f32) -> u32 {
     let line = &l.line;
     let mut best = (f32::MAX, line.from);
@@ -58,6 +59,7 @@ fn line_offset_at(l: &PlacedLine, x: f32) -> u32 {
 }
 
 /// Last position of the line a caret can show on this line.
+#[expect(clippy::cast_possible_truncation, reason = "the carets and spaces of one fragment are far below u32::MAX")]
 fn line_end(l: &PlacedLine) -> u32 {
     let line = &l.line;
     if line.hard || line.to == line.from {
@@ -129,6 +131,10 @@ impl Layout {
         let p = self.pages.get(page.min(self.pages.len().saturating_sub(1)))?;
         // Inside a table cell only that cell's content answers: a click under a short cell's text must not land in
         // the taller neighbour. The innermost cell wins (a nested table's cells come later in the list).
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "page.cells holds fewer than u16::MAX entries (see open_region)"
+        )]
         let region = p
             .cells
             .iter()
