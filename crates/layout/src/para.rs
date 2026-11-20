@@ -334,7 +334,7 @@ impl Builder<'_, '_> {
         None
     }
 
-    fn fixed_unit(&self, kind: UnitKind, from: u32, width: f32, ascent: f32, descent: f32, brk: Brk) -> Unit {
+    fn fixed_unit(kind: UnitKind, from: u32, width: f32, ascent: f32, descent: f32, brk: Brk) -> Unit {
         Unit {
             kind,
             from,
@@ -447,7 +447,7 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
                 let Some(a) = b.atoms.get(*index).copied() else { continue };
                 let brk = brk_at(*end);
                 let unit = match a.kind {
-                    AtomKind::Break => b.fixed_unit(UnitKind::Newline, pos16, 0.0, 0.0, 0.0, Brk::Mandatory),
+                    AtomKind::Break => Builder::fixed_unit(UnitKind::Newline, pos16, 0.0, 0.0, 0.0, Brk::Mandatory),
                     AtomKind::Footnote => {
                         let st = match footnote_style {
                             Some(i) => i,
@@ -470,7 +470,7 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
                     }
                     _ => {
                         let k = atom_scale(a, inp);
-                        b.fixed_unit(
+                        Builder::fixed_unit(
                             UnitKind::Atom(*index),
                             pos16,
                             a.width * k,
@@ -500,7 +500,7 @@ fn layout_impl(inp: &ParaInput<'_>, sh: &Shapers<'_>, min_content: Option<&mut f
                         flush(piece, i, &mut pos16, &mut units)?;
                         let kind = if c == '\t' { UnitKind::Tab } else { UnitKind::Newline };
                         let brk = if c == '\n' { Brk::Mandatory } else { brk_at(abs + 1) };
-                        units.push_back(b.fixed_unit(kind, pos16, 0.0, 0.0, 0.0, brk));
+                        units.push_back(Builder::fixed_unit(kind, pos16, 0.0, 0.0, 0.0, brk));
                         pos16 += 1;
                         piece = i + 1;
                     } else if i > piece && brk_at(abs) != Brk::No {

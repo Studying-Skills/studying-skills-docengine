@@ -93,8 +93,9 @@ fn rect_path(x: f32, y: f32, w: f32, h: f32) -> Option<krilla::geom::Path> {
 }
 
 fn image_of(bytes: Vec<u8>) -> Option<Image> {
-    let data: krilla::Data = Arc::new(bytes.clone()).into();
-    let made = match bytes.get(..4)? {
+    let header: [u8; 4] = bytes.get(..4)?.try_into().ok()?;
+    let data: krilla::Data = Arc::new(bytes).into();
+    let made = match &header {
         [0x89, b'P', b'N', b'G'] => Image::from_png(data, true),
         [0xff, 0xd8, ..] => Image::from_jpeg(data, true),
         [b'G', b'I', b'F', _] => Image::from_gif(data, true),
