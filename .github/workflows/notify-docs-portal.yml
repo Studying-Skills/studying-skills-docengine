@@ -1,0 +1,33 @@
+name: Notify docs portal
+
+# When the synced docs change on the default branch, tell the docs portal to rebuild.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'README.md'
+      - 'GLOSSARY.md'
+      - 'docs/**'
+      - 'corpus/README.md'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    # Not configured here: skip quietly instead of failing.
+    if: ${{ vars.DOCS_PORTAL_REPO != '' }}
+    steps:
+      - name: Send docs-updated
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_PORTAL_DISPATCH_TOKEN }}
+          PORTAL_REPO: ${{ vars.DOCS_PORTAL_REPO }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::DOCS_PORTAL_DISPATCH_TOKEN is not set; skipping."
+            exit 0
+          fi
+          gh api "repos/$PORTAL_REPO/dispatches" -f event_type=docs-updated -f "client_payload[repo]=$REPO_NAME"
