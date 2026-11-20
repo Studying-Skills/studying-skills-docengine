@@ -230,6 +230,10 @@ impl Engine {
     }
 
     /// Position nearest to a point of a page; -1 when the document is empty.
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "a text position above i32::MAX would need over 2^31 UTF-16 units, more than a wasm32 memory holds"
+    )]
     pub fn hit_test(&mut self, page: usize, x: f32, y: f32) -> Result<i32, String> {
         Ok(self.ensure_layout()?.hit_test(page, x, y).map_or(-1, |p| p as i32))
     }
@@ -287,7 +291,7 @@ impl Engine {
 
     /// Page (from 0) a position is on; -1 when the document is empty.
     pub fn page_of(&mut self, pos: u32) -> Result<i32, String> {
-        Ok(self.ensure_layout()?.page_of(pos).map_or(-1, |p| p as i32))
+        Ok(self.ensure_layout()?.page_of(pos).map_or(-1, |p| i32::try_from(p).unwrap_or(-1)))
     }
 }
 
@@ -354,6 +358,8 @@ fn screen_json(page: &Page) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #![expect(clippy::float_cmp, reason = "assertions of exact, deterministic values")]
+
     use super::*;
 
     fn font() -> Vec<u8> {

@@ -358,6 +358,7 @@ fn roman(mut n: u32) -> String {
 }
 
 /// Bijective base-N numbering with the given letters: a, b, …, z, aa, ab, …
+#[expect(clippy::cast_possible_truncation, reason = "a numbering alphabet has a handful of letters")]
 fn alphabetic(mut n: u32, letters: &[char]) -> String {
     let base = letters.len() as u32;
     let mut out = Vec::new();
@@ -610,6 +611,10 @@ impl Flattener<'_, '_> {
                     let mut at = pos + 1;
                     let (ix, iw) = (x + LIST_INDENT, (width - LIST_INDENT).max(1.0));
                     for (i, item) in list.items.iter().enumerate() {
+                        #[expect(
+                            clippy::cast_possible_truncation,
+                            reason = "a list never has anywhere near u32::MAX items"
+                        )]
                         let m = list_marker(list, list.start.saturating_add(i as u32));
                         self.blocks(&item.blocks, Context::ListItem, ix, iw, at + 1, Some(&m))?;
                         at += 2 + item.blocks.iter().map(Block::size).sum::<u32>();
@@ -1313,6 +1318,10 @@ fn cell_rect(t: &TableFlow, c: &CellFlow, left: f32, y: f32, h: f32) -> Rect {
     Rect::new(left + t.x + x0, y, (x1 - x0).max(0.0), h)
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "page.cells is checked just above: it holds fewer than u16::MAX entries"
+)]
 fn open_region(rect: Rect, ghost: bool, page: &mut PageLayout) -> u16 {
     if ghost || page.cells.len() >= usize::from(u16::MAX) - 1 {
         return 0;
@@ -1866,7 +1875,7 @@ pub fn finish(
                     reason = "count is at least 3.0 and at most MAX_LEADER_DOTS"
                 )]
                 let dots = ".".repeat(count as usize);
-                if let Some(dots) = line_of(&dots,&style(Align::Left, from), 1.0e4)? {
+                if let Some(dots) = line_of(&dots, &style(Align::Left, from), 1.0e4)? {
                     p.running.push(PlacedLine {
                         line: Arc::new(dots),
                         x: m.x,

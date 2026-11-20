@@ -1,3 +1,6 @@
+#![expect(clippy::cast_possible_truncation, reason = "test counts are tiny")]
+#![expect(clippy::float_cmp, reason = "assertions of exact, deterministic values")]
+
 use std::sync::Arc;
 
 use proptest::prelude::*;

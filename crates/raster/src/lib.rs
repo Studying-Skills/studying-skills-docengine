@@ -66,6 +66,11 @@ fn draw_run(pixmap: &mut Pixmap, run: &GlyphRun, shaper: &Shaper<'_>, upm: f32, 
 }
 
 /// Render one page on a white background. `scale` is pixels per point (96 dpi = 4/3, 192 dpi = 8/3).
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "w and h are finite and between 1 and MAX_SIDE before they are cast; the error closure clamps at 0 first"
+)]
 pub fn render_page(page: &Page, fonts: &FontSet, scale: f32) -> Result<Pixmap, RasterError> {
     let (w, h) = ((page.size.w * scale).ceil(), (page.size.h * scale).ceil());
     let bad = || RasterError::BadSize(w.max(0.0) as u32, h.max(0.0) as u32);

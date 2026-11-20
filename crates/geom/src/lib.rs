@@ -31,6 +31,10 @@ pub fn to_mm(pt: f32) -> f32 {
     pt / PT_PER_MM
 }
 /// Points to twips, rounded to the nearest twip (what DOCX stores).
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "the float to int cast saturates, and a page length is far below i32::MAX twips"
+)]
 pub fn to_twips(pt: f32) -> i32 {
     (pt / PT_PER_TWIP).round() as i32
 }

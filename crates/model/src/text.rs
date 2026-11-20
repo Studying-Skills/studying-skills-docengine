@@ -1,5 +1,6 @@
 //! UTF-16 lengths and slices of UTF-8 strings (document positions count UTF-16 code units).
 
+#[expect(clippy::cast_possible_truncation, reason = "a string of u32::MAX UTF-16 units is beyond any document")]
 pub fn utf16_len(s: &str) -> u32 {
     s.chars().map(|c| c.len_utf16() as u32).sum()
 }
@@ -10,6 +11,7 @@ pub fn utf16_slice(s: &str, from: u32, to: u32) -> &str {
     let (mut start, mut end) = (s.len(), s.len());
     let (mut found_start, mut units) = (false, 0u32);
     for (byte, c) in s.char_indices() {
+        #[expect(clippy::cast_possible_truncation, reason = "a string of u32::MAX UTF-16 units is beyond any document")]
         let next = units + c.len_utf16() as u32;
         if !found_start && from < next {
             start = byte;
