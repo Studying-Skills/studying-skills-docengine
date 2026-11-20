@@ -1,7 +1,7 @@
 # studying-skills-docengine
 
 Рушій верстки редактора звіту StudyFlow: документ → рядки → сторінки → PDF. Rust, збирається
-нативно й у WebAssembly. План: `studying-skills-frontend/design/editor-engine-2a.md`.
+нативно й у WebAssembly.
 
 | Шар | Крейт | Завдання |
 |---|---|---|
@@ -24,4 +24,4 @@ cargo run -p sfdoc-cli -- inspect corpus/plain/doc.json
 cargo run -p sfdoc-cli -- render corpus/plain/doc.json -o page.png
 ```
 
-Архітектура: `docs/ARCHITECTURE.md`. Звіт про перевірки ризиків: `docs/e0-report.md`. Викидні прототипи: `spikes/`.
+Архітектура: `docs/ARCHITECTURE.md`. Викидні прототипи: `spikes/` (буде видалено, #5).
