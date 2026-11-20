@@ -30,4 +30,4 @@ cargo run -p sfdoc-cli -- render corpus/plain/doc.json -o page.png
 Packages: `@studying-skills/docengine` (the layout engine) and `@studying-skills/spellengine` (the speller). Both
 are published together, with one version, from a `v*` tag (`.github/workflows/publish.yml`).
 
-Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Throwaway prototypes: `spikes/` (to be removed, #5).
+Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
