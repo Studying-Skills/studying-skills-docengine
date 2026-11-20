@@ -1,0 +1,8 @@
+# Snyk policy.
+version: v1.25.0
+# `snyk code test` ignores `ignore` entries on this plan and applies only `exclude`.
+exclude:
+  code:
+    # Vendored developer tool, kept in sync by hand: it scans the directory given on its command line and
+    # runs git, so its path-from-argument finding (Low) describes its purpose.
+    - scripts/check-language.mjs
