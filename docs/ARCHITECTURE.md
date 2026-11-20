@@ -1,138 +1,149 @@
-# Архітектура рушія верстки
+# Layout engine architecture
 
-Рушій перетворює документ звіту на сторінки: рядки, їхні координати, список того, що малювати, і PDF.
-Він нічого не знає про редактор, браузер чи ProseMirror: на вході JSON документа й байти шрифтів, на виході
-числа. Той самий код працює в браузері (WebAssembly) і нативно (утиліта `sfdoc`), тому розбиття на сторінки
-всюди однакове.
+The engine turns a report document into pages: lines, their coordinates, a list of what to paint, and a PDF.
+It knows nothing about the editor, the browser or ProseMirror: document JSON and font bytes go in, numbers come
+out. The same code runs in the browser (WebAssembly) and natively (the `sfdoc` CLI), so pagination is the same
+everywhere.
 
-## Шари
+## Layers
 
-| Шар | Крейт | Завдання |
+| Layer | Crate | Job |
 |---|---|---|
-| 0 | `sfdoc-geom` | одиниці (pt), точки, прямокутники |
-| 0 | `sfdoc-spell` | правопис (див. нижче); від крейтів верстки не залежить |
-| 1 | `sfdoc-model` | формат документа, позиції, заміна блоків |
-| 1 | `sfdoc-fonts` | шрифти: метрики, формування гліфів (rustybuzz), запасний шрифт для літери, контури |
-| 2 | `sfdoc-layout` | абзац → рядки, потік сторінок, таблиці, виноски, зміст, геометричні запити, список відображення |
-| 3 | `sfdoc-raster` | PNG сторінки (тести й утиліта) |
-| 3 | `sfdoc-pdf` | PDF зі списку відображення (krilla) |
-| 4 | `sfdoc-wasm` | прив'язки рушія верстки до JavaScript |
-| 4 | `sfdoc-spell-wasm` | прив'язки правопису до JavaScript, окремий модуль wasm |
-| 4 | `sfdoc-cli` | утиліта `sfdoc`: `inspect`, `layout`, `render`, `pdf`, `bench` |
+| 0 | `sfdoc-geom` | units (pt), points, rectangles |
+| 0 | `sfdoc-spell` | spell checking (see below); depends on no layout crate |
+| 1 | `sfdoc-model` | document format, positions, block replacement |
+| 1 | `sfdoc-fonts` | fonts: metrics, shaping (rustybuzz), fallback font per character, outlines |
+| 2 | `sfdoc-layout` | paragraph to lines, page flow, tables, footnotes, contents, geometry queries, display list |
+| 3 | `sfdoc-raster` | page PNG (tests and the CLI) |
+| 3 | `sfdoc-pdf` | PDF from the display list (krilla) |
+| 4 | `sfdoc-wasm` | JavaScript bindings of the layout engine |
+| 4 | `sfdoc-spell-wasm` | JavaScript bindings of the speller, a separate wasm module |
+| 4 | `sfdoc-cli` | the `sfdoc` CLI: `inspect`, `layout`, `render`, `pdf`, `bench` |
 
-Крейт залежить лише від нижчих шарів; це перевіряє `cargo xtask layers` (список — `LAYERS` у `xtask/src/main.rs`).
-У всьому коді заборонено `unsafe`, а clippy не пропускає `unwrap`, `expect`, `panic!` та індексацію без перевірки:
-рушій не має падати на жодному документі. Виняток — `sfdoc-wasm` (wasm-bindgen розгортається в `unsafe`), тому
-логіка там лежить у звичайному `engine.rs`, який тестується нативно. Так само `sfdoc-spell-wasm`: власної логіки
-не має, лише передає виклики в `sfdoc-spell`.
+A crate depends only on lower layers; `cargo xtask layers` checks this (the list is `LAYERS` in
+`xtask/src/main.rs`). `unsafe` is forbidden throughout, and clippy rejects `unwrap`, `expect`, `panic!` and
+unchecked indexing: the engine must not crash on any document. The exception is `sfdoc-wasm` (wasm-bindgen
+expands to `unsafe`), so its logic lives in a plain `engine.rs` that is tested natively. The same goes for
+`sfdoc-spell-wasm`: it has no logic of its own and only forwards calls to `sfdoc-spell`.
 
-## Документ і позиції
+## Document and positions
 
-`sfdoc-model`: `Document { version, page, running, text, styles, blocks }`. Блоки — абзац, заголовок, список, таблиця, цитата,
-код, «листок» (рисунок, формула, розрив сторінки, зміст). Усередині абзацу — текст з оформленням, атоми
-(формула в рядку, рисунок, позначка виноски) і примусові розриви рядка.
+`sfdoc-model`: `Document { version, page, running, text, styles, blocks }`. Blocks are paragraph, heading, list,
+table, quote, code, and leaf (picture, formula, page break, contents). Inside a paragraph there is formatted
+text, atoms (inline formula, picture, footnote mark) and forced line breaks.
 
-Позиція — одне ціле число за схемою «плаский токен»: вхід у вузол і вихід з нього — по 1, атом — 1, текст —
-у кодових одиницях UTF-16. Схема навмисно збігається з позиціями ProseMirror: редактор, побудований на тій самій
-схемі, ділить позиції з рушієм без перерахунку. Формат версіонований
-(`FORMAT_VERSION`); `replace_blocks(from, to, json)` міняє частину блоків, не пересилаючи документ цілком.
+A position is one integer in the "flat token" scheme: entering and leaving a node count 1 each, an atom counts
+1, text counts in UTF-16 code units. The scheme deliberately matches ProseMirror's positions: an editor built on
+the same scheme shares positions with the engine without translation. The format is versioned
+(`FORMAT_VERSION`); `replace_blocks(from, to, json)` replaces a range of blocks without sending the whole
+document.
 
-## Верстка
+## Layout
 
-1. **Абзац** (`para.rs`). Текст ріжеться за можливостями переносу UAX #14 і за зміною оформлення чи шрифту;
-   кожен шматок формується окремо, рядки заповнюються жадібно. Вирівнювання за шириною — розтягуванням пробілів.
-   Міжрядковий інтервал — як у Word (множник від висоти рядка шрифту).
-2. **Потік** (`flow.rs`). Блоки розкладаються по сторінках: «тримати з наступним» для заголовків, висячі рядки,
-   примусові розриви, колонтитули й номер сторінки. Рисунок чи формула, вищі за сторінку, зменшуються до її висоти.
-3. **Таблиці**. Ширини колонок — задані або за вмістом (найдовше слово не розривається). Рядок переходить на
-   наступну сторінку цілим; вищий за сторінку — продовжується порядково; рядки шапки повторюються (лише малюються,
-   позицій не мають). Таблиця всередині клітинки переходить на наступну сторінку рядок за рядком разом із клітинкою,
-   що її містить. Лінії сітки — усі, лише між рядками, лише рамка або жодної (`borders`).
-4. **Виноски** стають унизу сторінки, де стоїть їхня позначка; рядок переходить далі разом зі своєю виноскою.
-5. **Зміст** рушій складає сам із заголовків документа, зі справжніми номерами сторінок. Так само — список
-   рисунків чи таблиць: блок змісту з `list` показує абзаци, позначені `entryOf` з тим самим іменем.
-6. **Стилі документа** (`styles` у документі: `body`, `h1`…`h6`, `code` і будь-яке ім'я, яке абзац називає в
-   `style`) міняють типовий вигляд свого виду абзацу; оформлення самого абзацу й тексту важить більше. Шрифт
-   основного тексту — шрифт усього документа, разом зі змістом, колонтитулами й номерами.
-7. **Рисунок, який обтікає текст** (`wrap` + вирівнювання ліворуч чи праворуч): власного місця в потоці не має,
-   його несе наступний абзац і ставить поруч зі своїм першим рядком. Рядки, що починаються вище низу рисунка,
-   коротші на його ширину; абзац, який закінчився раніше, передає залишок висоти наступному. Те, що не обтікає
-   (таблиця, заголовок розділу з нової сторінки, інший рисунок), стає під рисунком. Рисунок без абзацу після
-   нього, ширший за 60 % тексту чи вищий за 60 % сторінки стоїть окремо, як звичайний.
-8. **Переноси** (`text.hyphenate`): слово, яке не вмістилося в рядок, ділиться на межі складу (`hyphen.rs`,
-   правила для української й російської, без словників). Дефіс лише малюється, позиції не має.
-9. **Колонтитули парних сторінок і водяний знак** — у `running`; водяний знак малюється під усім іншим.
-10. **Недруковані знаки** (`page_with(.., marks)`) — лише для екрана: крапки в пробілах, стрілки табуляції й
-   примусового розриву, ¶ у кінці абзацу. У PDF їх не буває.
+1. **Paragraph** (`para.rs`). Text is cut at UAX #14 line-break opportunities and at changes of formatting or
+   font; every piece is shaped on its own, and lines are filled greedily. Justification stretches the spaces.
+   Line spacing works as in Word (a multiple of the font's line height).
+2. **Flow** (`flow.rs`). Blocks are laid out on pages: "keep with next" for headings, widow and orphan control,
+   forced breaks, headers, footers and the page number. A picture or formula taller than a page is scaled down
+   to the page height.
+3. **Tables**. Column widths are given or come from the content (the longest word is not broken). A row moves to
+   the next page whole; a row taller than a page continues line by line; header rows repeat (they are only
+   painted and have no positions). A table inside a cell moves to the next page row by row together with the cell
+   that holds it. Grid lines: all, between rows only, frame only, or none (`borders`).
+4. **Footnotes** go to the bottom of the page where their mark stands; a line moves on together with its
+   footnote.
+5. **Contents**: the engine builds it from the document's headings, with real page numbers. The same goes for a
+   list of figures or tables: a contents block with `list` shows the paragraphs marked with `entryOf` of the same
+   name.
+6. **Document styles** (`styles` in the document: `body`, `h1`…`h6`, `code` and any name a paragraph states in
+   `style`) change the default look of their kind of paragraph; the paragraph's own formatting and the text's
+   formatting win over them. The body text font is the font of the whole document, including the contents,
+   headers, footers and page numbers.
+7. **A picture that text flows around** (`wrap` plus left or right alignment) has no place of its own in the
+   flow: the next paragraph carries it and puts it beside its first line. Lines that start above the bottom of the
+   picture are shorter by its width; a paragraph that ends earlier hands the remaining height to the next one.
+   What does not flow around it (a table, a section heading that starts a new page, another picture) goes below
+   the picture. A picture with no paragraph after it, wider than 60 % of the text width or taller than 60 % of the
+   page stands alone, like an ordinary one.
+8. **Hyphenation** (`text.hyphenate`): a word that does not fit on the line is split at a syllable boundary
+   (`hyphen.rs`, rules for Ukrainian and Russian, no dictionaries). The hyphen is only painted and has no
+   position.
+9. **Even-page headers and footers and the watermark** are in `running`; the watermark is painted under
+   everything else.
+10. **Formatting marks** (`page_with(.., marks)`) are for the screen only: dots in spaces, arrows for tabs and
+    forced breaks, ¶ at the end of a paragraph. They never reach the PDF.
 
-Сторінки перераховуються цілком після кожної правки; кешується тільки розбиття блоку на рядки (правка скидає
-кеш лише тих блоків, які вона замінила). Тому верстка після правки дорівнює повній верстці за побудовою — це головний інваріант, його
-перевіряє тест властивостей `incremental`.
+Pages are recomputed in full after every edit; only the breaking of a block into lines is cached (an edit drops
+the cache only for the blocks it replaced). So layout after an edit equals a full layout by construction. This is
+the main invariant, and the `incremental` property test checks it.
 
-`fingerprint(page)` — хеш того, що на сторінці намальовано, без позицій: літера, введена на третій сторінці,
-зсуває позиції далі по документу, але не вигляд десятої, і десяту перемальовувати не треба.
+`fingerprint(page)` is a hash of what is painted on a page, without positions: a letter typed on page three
+shifts the positions further down the document but not the look of page ten, so page ten need not be repainted.
 
-## Геометричні запити
+## Geometry queries
 
 `caret_rect(pos)`, `hit_test(page, x, y)`, `selection_rects(from, to)`, `line_move(pos, down, goal_x)`,
-`line_bounds(pos)`, `page_of(pos)`. На них тримається введення в редакторі: курсор, виділення, миша, рух
-рядками. Порядок елементів на сторінці не збігається з порядком позицій (рядок таблиці, розірваний між
-сторінками), тому запити не покладаються на впорядкованість.
+`line_bounds(pos)`, `page_of(pos)`. Editor input rests on them: the caret, selection, the mouse, moving by
+lines. The order of items on a page does not match the order of positions (a table row split across pages), so
+the queries do not rely on ordering.
 
-## Список відображення
+## Display list
 
-`page(index)` → елементи трьох видів: `Glyphs` (шрифт, розмір, колір, точка початку, гліфи зі зсувами й текст),
-`Rect` (лінії таблиць, підкреслення, тло), `Object` (рисунок чи формула: прямокутник і ключ). З одного списку
-малюють усі: браузер (DOM, елемент на слово), растр (PNG для тестів) і PDF.
+`page(index)` returns items of three kinds: `Glyphs` (font, size, colour, origin, glyphs with offsets, and the
+text), `Rect` (table rules, underlines, backgrounds), `Object` (a picture or formula: a rectangle and a key).
+Every painter draws from the same list: the browser (DOM, one element per word), the rasterizer (PNG for tests)
+and the PDF writer.
 
-Що мусить робити той, хто малює сторінку в браузері, щоб ширини збігалися з рушієм:
+What a painter that draws a page in the browser must do so that widths match the engine:
 
-- Кожен відрізок `Glyphs` (слово або його частина) — окремий елемент у точці початку, яку дав рушій. Рядок,
-  намальований одним шматком, розходиться з рушієм до 2 px: браузери інакше застосовують кернінг навколо пробілів.
-- Текст малюється з `text-rendering: geometricPrecision`. Інакше Chromium округлює ширини гліфів до цілих пікселів,
-  і окреме слово розходиться з рушієм на кілька пікселів; з цим правилом різниця менша за 0,2 px у Chromium,
-  Firefox і WebKit.
+- Draw every `Glyphs` run (a word or part of one) as its own element at the origin the engine gave. A line drawn
+  as one string drifts from the engine by up to 2 px, because browsers kern around spaces differently.
+- Draw text with `text-rendering: geometricPrecision`. Otherwise Chromium rounds glyph widths to whole pixels and
+  a single word drifts from the engine by several pixels; with it, the difference stays under 0.2 px in Chromium,
+  Firefox and WebKit.
 
 ## PDF
 
-`sfdoc-pdf` кладе ті самі гліфи в ті самі координати. Текст виділяється й шукається (відповідність гліф → текст
-через `cluster`), шрифти вбудовуються підмножинами, посилання — анотації. Формули приходять як SVG з MathJax;
-їх читає власний читач SVG, який розуміє лише контури (`outline_svg.rs`): повний SVG-рендерер важить більше за
-решту рушія й увімкнений тільки в утиліті (feature `svg`). Текст усередині формули фронтенд заздалегідь
-перетворює на контури шрифтом рушія (`text_outline`). Чого намалювати не вдалося, стає порожньою рамкою і
-потрапляє в список `missing`.
+`sfdoc-pdf` puts the same glyphs at the same coordinates. Text can be selected and searched (glyphs map to text
+through `cluster`), fonts are embedded as subsets, links become annotations. Formulas arrive as SVG from MathJax;
+they are read by an SVG reader of our own that understands outlines only (`outline_svg.rs`): a full SVG renderer
+weighs more than the rest of the engine and is enabled only in the CLI (the `svg` feature). The caller turns the
+text inside a formula into outlines with the engine's font beforehand (`text_outline`). Whatever cannot be drawn
+becomes an empty frame and goes into the `missing` list.
 
-## Шрифти
+## Fonts
 
-Рушій не має вбудованих шрифтів і не читає файлів: байти передає той, хто його запускає. Номер шрифту в списку
-відображення — це номер у порядку завантаження, тому браузер і рушій мусять завантажувати ті самі файли в тому
-самому порядку. Набір — Liberation (Serif, Sans, Mono), метрично сумісний із Times New Roman, Arial, Courier New.
+The engine has no built-in fonts and reads no files: whoever runs it passes the bytes. A font's number in the
+display list is its number in load order, so the browser and the engine must load the same files in the same
+order. The set is Liberation (Serif, Sans, Mono), metric-compatible with Times New Roman, Arial and Courier New.
 
-## Правопис
+## Spell checking
 
-`sfdoc-spell` стоїть осторонь верстки: не залежить від жодного крейта рушія й збирається в окремий wasm
-(`sfdoc-spell-wasm`), тож редактор може завантажувати його лише тоді, коли перевірку ввімкнено. Словники — файли Hunspell, їх читає `spellbook`; байти словників, як і шрифтів, передає той, хто
-запускає. Крейт додає те, що потрібно редакторові довкола пошуку слова: ріже абзац на слова, оминає адреси,
-імена файлів, абревіатури й ідентифікатори, обирає словник за письмом слова (кирилиця чи латинка), позначає
-слово з літерами двох письмен (латинська «e» в українському слові) і першим пропонує його виправлення,
-тримає власні слова користувача. Зсуви — в одиницях UTF-16, як позиції тексту в браузері.
+`sfdoc-spell` stands apart from layout: it depends on no engine crate and is built into a separate wasm module
+(`sfdoc-spell-wasm`), so an editor can load it only when spell checking is on. Dictionaries are Hunspell files
+read by `spellbook`; like fonts, their bytes are passed in by whoever runs it. The crate adds what an editor needs
+around the word lookup: it cuts a paragraph into words, skips addresses, file names, abbreviations and
+identifiers, chooses the dictionary by the script of the word (Cyrillic or Latin), flags a word that mixes
+letters of two scripts (a Latin "e" in a Ukrainian word) and offers its fix first, and keeps the user's own
+words. Offsets are in UTF-16 code units, like text positions in the browser.
 
-## Тести й бюджети
+## Tests and budgets
 
-| Рівень | Що | Де |
+| Level | What | Where |
 |---|---|---|
-| L0 | fmt, clippy, шари | `cargo xtask ci` |
-| L1 | модульні | поруч із кодом: `crates/*/src/tests.rs` або вбудовані модулі тестів |
-| L2 | властивості: нічого не виходить за сторінку, порядок, hit-test ↔ caret, верстка після правки = повній | `crates/layout/src/tests.rs` (proptest) |
-| L3 | знімки: де став кожен рядок корпусу | `crates/cli/tests/snapshots` (insta) |
-| L7 | швидкість і розмір | `sfdoc bench [сторінок] [бюджет, мс]`, розмір wasm ≤ 1,5 МБ gzip |
+| L0 | fmt, clippy, layers | `cargo xtask ci` |
+| L1 | unit | next to the code: `crates/*/src/tests.rs` or inline test modules |
+| L2 | properties: nothing leaves the page, order, hit-test and caret agree, layout after edits equals a full layout | `crates/layout/src/tests.rs` (proptest) |
+| L3 | snapshots: where every line of the corpus landed | `crates/cli/tests/snapshots` (insta) |
+| L7 | speed and size | `sfdoc bench [pages] [budget, ms]`, wasm at most 1.5 MB gzip |
 
-Рівні L4 (порівняння з LibreOffice), L5 (PDF без браузера) і L6 (три браузери) потребують редактора, тому
-працюють поза цим сховищем, у застосунку редактора, який вбудовує рушій.
+Levels L4 (comparison with LibreOffice), L5 (PDF without a browser) and L6 (three browsers) need an editor, so
+they run outside this repo, in the editor app that embeds the engine.
 
-## Пакети й випуски
+## Packages and releases
 
-Рушій виходить як два пакети npm: `@studying-skills/docengine` (`sfdoc-wasm`) і `@studying-skills/spellengine`
-(`sfdoc-spell-wasm`). Тег `v*` запускає `.github/workflows/publish.yml`: він збирає обидва модулі wasm,
-складає пакети (`scripts/pack-npm.sh`) і публікує обидва з однією версією, яка мусить збігатися з версією
-робочого простору в `Cargo.toml`. Запит на злиття, що зачіпає пакування, збирає пакети без публікації.
+The engine ships as two npm packages: `@studying-skills/docengine` (`sfdoc-wasm`) and
+`@studying-skills/spellengine` (`sfdoc-spell-wasm`). A `v*` tag runs `.github/workflows/publish.yml`: it builds
+both wasm modules, assembles the packages (`scripts/pack-npm.sh`) and publishes both with one version, which must
+match the workspace version in `Cargo.toml`. A pull request that touches packaging builds the packages without
+publishing them.
