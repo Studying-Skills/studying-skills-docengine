@@ -1,4 +1,4 @@
-//! Real MathJax output (30 formulas from the E0 spike) through the outline reader.
+//! Real MathJax output (30 formulas) through the outline reader.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::indexing_slicing)]
 
 #[test]

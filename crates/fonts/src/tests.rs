@@ -43,8 +43,8 @@ fn ukrainian_text_shapes_one_glyph_per_letter_with_clusters() {
 }
 
 #[test]
-fn widths_match_what_browsers_measured_in_the_spike() {
-    // E0/S4: Chromium laid out "Привіт, світе" at 18.666666 px with this font file as 101.6185 px wide.
+fn widths_match_what_browsers_measured() {
+    // Reference value: Chromium laid out "Привіт, світе" at 18.666666 px with this font file as 101.6185 px wide.
     let font = load("Regular");
     let s = font.shaper().unwrap();
     assert!((s.advance("Привіт, світе", 18.666_666) - 101.6185).abs() < 0.01);
