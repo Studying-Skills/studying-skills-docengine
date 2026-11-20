@@ -20,7 +20,7 @@ sfdoc — StudyFlow document engine
   sfdoc pdf <doc.json> -o <out.pdf> [--assets DIR] [--math FILE] [--title T] [--fonts DIR]
       write the document as PDF. Pictures are files under --assets (the document's own folder by default);
       --math is a JSON object from formula source to SVG. What is missing becomes an empty frame and is
-      listed on stderr. (A report.html goes to PDF with the frontend's report-pdf tool, which runs this engine.)
+      listed on stderr.
   sfdoc bench [PAGES] [BUDGET_MS] [--fonts DIR]
       time the layout of a synthetic report (50 pages by default): the full layout and one keystroke; with a
       budget, fail when the median keystroke is slower
