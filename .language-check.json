@@ -1,8 +1,5 @@
 {
   "allow": [
-    { "path": "README.md", "category": "docs", "reason": "pending translation, #3" },
-    { "path": "docs", "category": "docs", "reason": "pending translation, #3" },
-    { "path": "corpus/README.md", "category": "docs", "reason": "pending translation, #3" },
     { "path": "crates/layout/src/hyphen.rs", "category": "test-data", "reason": "Comments quote Ukrainian letters and words (digraphs, syllable examples) that the hyphenation rules are about" },
     { "path": "crates/spell/src/lib.rs", "category": "test-data", "reason": "Comments quote Ukrainian words and abbreviations as examples of what the speller accepts or checks" },
     { "path": "crates/fonts/src/tests.rs", "category": "test-data", "reason": "Comments quote the Cyrillic sample text and letters that the font tests shape and measure" },

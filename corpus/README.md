@@ -1,14 +1,13 @@
-# Корпус документів
+# Document corpus
 
-Кожна тека — один документ у форматі рушія (`doc.json`). На корпусі тримаються еталонні знімки (L3),
-порівняння з LibreOffice (L4) і заміри швидкодії (L7).
+Every folder is one document in the engine's format (`doc.json`). The corpus feeds the reference snapshots (L3,
+`crates/cli/tests/corpus.rs`): every document is read, described and laid out, and the results are pinned as
+`insta` snapshots. The `corpus_is_not_empty` test requires at least 4 documents.
 
-| Тека | Що перевіряє |
+| Folder | What it checks |
 |---|---|
-| `empty` | порожній документ |
-| `one-char` | один символ |
-| `plain` | типовий текст звіту: заголовки, абзаци з вирівнюванням за шириною й абзацним відступом |
-| `marks` | оформлення тексту: накреслення, розміри, кольори, індекси, шрифти, формула й виноска в рядку |
-| `structure` | списки, вкладений список, таблиця з об'єднаною клітинкою, рисунок, формула, цитата, код |
-
-Справжні знеособлені звіти додаються сюди після дозволу власника.
+| `empty` | an empty document |
+| `one-char` | a single character |
+| `plain` | typical report text: headings, justified paragraphs with a first-line indent |
+| `marks` | text formatting: styles, sizes, colours, subscripts and superscripts, fonts, an inline formula and footnote |
+| `structure` | lists, a nested list, a table with a merged cell, a picture, a formula, a quote, code |

@@ -22,4 +22,4 @@ A report layout engine: document to lines to pages to PDF. Rust, built natively 
 
 ## Docs
 
-`docs/ARCHITECTURE.md` describes the layers and the pipeline; read it first. The `README.md` has the commands and the crate table. The docs are Ukrainian and are being translated.
+`docs/ARCHITECTURE.md` describes the layers and the pipeline; read it first. The `README.md` has the commands and the crate table. The docs are in English.
