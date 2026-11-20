@@ -128,12 +128,19 @@ function globToRegExp(glob) {
   return new RegExp(`^${re}$`);
 }
 
+// Drops trailing slashes with a scan: the regex /\/+$/ is quadratic on a long run of slashes.
+function trimTrailingSlashes(s) {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "/") end--;
+  return s.slice(0, end);
+}
+
 // A config path: a glob, or a plain path that matches the file itself or a directory's contents
 // ("src/locales", "src/locales/"). A leading "./" is ignored.
 function pathMatcher(pattern) {
   const p = pattern.replace(/^(\.\/)+/, "");
   if (/[*?]/.test(p)) return globToRegExp(p);
-  const plain = p.replace(/\/+$/, "").replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const plain = trimTrailingSlashes(p).replace(/[.+^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${plain}(?:/.*)?$`);
 }
 
@@ -301,7 +308,11 @@ function opensRegex(text, prev) {
   if (REGEX_AFTER.has(p)) return true;
   if (p === ">" && text[prev - 1] === "=") return true;
   if (/[\w$]/.test(p)) {
-    const word = /[\w$]+$/.exec(text.slice(Math.max(0, prev - 15), prev + 1))[0];
+    // The identifier ending at `prev`, looking back at most 16 characters. A scan, not a regex.
+    const floor = Math.max(0, prev - 15);
+    let from = prev;
+    while (from >= floor && /[\w$]/.test(text[from])) from--;
+    const word = text.slice(from + 1, prev + 1);
     return REGEX_AFTER_WORD.has(word);
   }
   return false;
@@ -514,7 +525,10 @@ function main() {
   } catch (e) {
     fail(`git ls-files failed in ${root}: ${(e.stderr || e.message).trim()}`);
   }
-  const files = [...new Set(listed.split("\0").filter(Boolean))].sort();
+  // Code point order (UTF-8 byte order), so the report is the same on every platform.
+  const files = [...new Set(listed.split("\0").filter(Boolean))].sort((a, b) =>
+    Buffer.compare(Buffer.from(a), Buffer.from(b)),
+  );
   let failed = false;
 
   for (const path of files) {
