@@ -1734,6 +1734,16 @@ fn a_table_of_contents_without_headings_or_longer_than_a_page() {
     assert_eq!(number.y, last_text.y);
 }
 
+#[test]
+fn the_dot_leader_of_a_table_of_contents_is_bounded_on_an_absurdly_wide_page() {
+    // A finite but absurd page width must not turn into an absurd run of dots (the count once came from the width alone).
+    let mut d = doc(vec![toc("Contents"), heading(1, "Intro")]);
+    d.page.width = 1.0e30;
+    let l = lay(&d);
+    let longest = l.pages[0].running.iter().map(|pl| line_text(pl).chars().count()).max().unwrap();
+    assert!(longest <= 10_000, "leader of {longest} characters");
+}
+
 // ---- property tests -------------------------------------------------------------------------------------------
 
 fn arb_words() -> impl Strategy<Value = String> {

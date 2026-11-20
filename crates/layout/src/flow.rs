@@ -165,6 +165,9 @@ const NOTE_RULE_OFFSET: f32 = 6.0;
 const TOC_NUMBER_COLUMN: f32 = 28.0;
 const TOC_LEVEL_INDENT: f32 = 35.433_07;
 const TOC_GAP: f32 = 4.0;
+/// Most dots in one table-of-contents leader. A leader this long is about 35,000 pt wide, far beyond any page the
+/// engine can render; the cap only keeps a finite but absurd page width from asking for a huge allocation.
+const MAX_LEADER_DOTS: f32 = 10_000.0;
 
 /// Cell padding left and right (Word's default 0.19 cm) and above and below the content.
 pub const CELL_PAD_X: f32 = 5.4;
@@ -1854,10 +1857,16 @@ pub fn finish(
             let num_left = m.width - num.width;
             // Dots from the end of the text to the number, ending flush before it.
             let room = num_left - TOC_GAP - (m.text_end + TOC_GAP);
-            let count = (room / dot).floor();
+            let count = (room / dot).floor().min(MAX_LEADER_DOTS);
             if count >= 3.0 {
                 let from = num_left - TOC_GAP - count * dot;
-                if let Some(dots) = line_of(&".".repeat(count as usize), &style(Align::Left, from), 1.0e4)? {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "count is at least 3.0 and at most MAX_LEADER_DOTS"
+                )]
+                let dots = ".".repeat(count as usize);
+                if let Some(dots) = line_of(&dots,&style(Align::Left, from), 1.0e4)? {
                     p.running.push(PlacedLine {
                         line: Arc::new(dots),
                         x: m.x,
