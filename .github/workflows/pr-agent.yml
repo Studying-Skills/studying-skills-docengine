@@ -19,9 +19,11 @@ jobs:
   pr-agent:
     name: PR-Agent
     runs-on: ubuntu-latest
-    # Skip bots, draft PRs and PRs from forks (they get no secrets). Comment commands (/review,
-    # /describe, /improve, /ask ...) are taken only from people with write access, so outsiders
-    # cannot spend the API key.
+    # Automatic runs skip bots, draft PRs and PRs from forks (fork PRs get no secrets). Comment
+    # commands (/review, /describe, /improve, /ask ...) are taken only from organization members
+    # and collaborators, so outsiders cannot spend the API key. Such a command runs on any PR,
+    # drafts and forks included, on purpose: a trusted person asked for it, and PR-Agent only
+    # reads the diff, it never runs the PR code.
     if: >-
       github.event.sender.type != 'Bot' &&
       (
