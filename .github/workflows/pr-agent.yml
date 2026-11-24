@@ -1,0 +1,45 @@
+name: PR-Agent
+
+# AI review of pull requests with PR-Agent (https://github.com/The-PR-Agent/pr-agent) on the
+# Anthropic API. Needs the ANTHROPIC_KEY secret. A copy of the organization's shared PR-Agent
+# workflow: a public repo can't call the private original, so keep the model and the image
+# version in step with it.
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  pr-agent:
+    name: PR-Agent
+    runs-on: ubuntu-latest
+    # Automatic runs skip bots, draft PRs and PRs from forks (fork PRs get no secrets). Comment
+    # commands (/review, /describe, /improve, /ask ...) are taken only from organization members
+    # and collaborators, so outsiders cannot spend the API key. Such a command runs on any PR,
+    # drafts and forks included, on purpose: a trusted person asked for it, and PR-Agent only
+    # reads the diff, it never runs the PR code.
+    if: >-
+      github.event.sender.type != 'Bot' &&
+      (
+        (github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+          github.event.pull_request.head.repo.full_name == github.repository) ||
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request &&
+          contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+      )
+    steps:
+      - name: Run PR-Agent
+        uses: docker://pragent/pr-agent:0.50.0-github_action
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ANTHROPIC.KEY: ${{ secrets.ANTHROPIC_KEY }}
+          config.model: "anthropic/claude-sonnet-5-5"
+          config.fallback_models: '["anthropic/claude-haiku-5-5"]'
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_improve: "true"
